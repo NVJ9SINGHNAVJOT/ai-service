@@ -31,26 +31,6 @@ class ModelInfo(BaseModel):
     updated_at: Optional[datetime] = Field(None, description="When the model was last updated")
 
 
-class DownloadModelRequest(BaseModel):
-    """Request body for POST /api/v1/models/download."""
-
-    repo_id: str = Field(
-        ...,
-        examples=["mlx-community/Llama-3.2-3B-Instruct-4bit"],
-        description="HuggingFace repository ID of the MLX-compatible model",
-    )
-    force: bool = Field(
-        False,
-        description="If true, overwrite an existing download",
-    )
-
-
-class UpdateModelRequest(BaseModel):
-    """Request body for POST /api/v1/models/update."""
-
-    name: str = Field(..., description="Local (sanitised) model name to update")
-
-
 class LoadModelRequest(BaseModel):
     """Request body for POST /api/v1/models/load."""
 

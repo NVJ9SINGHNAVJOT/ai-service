@@ -214,8 +214,8 @@ def test_models_list_endpoint(api_client):
     assert isinstance(data["data"], list)
 
 
-def test_delete_nonexistent_model_returns_404(api_client):
-    """DELETE /api/v1/models/nonexistent should return 404."""
+def test_removed_model_delete_endpoint_returns_404(api_client):
+    """DELETE /api/v1/models/{name} should no longer be mounted."""
     resp = api_client.delete("/api/v1/models/totally-fake-model-xyz")
     assert resp.status_code == 404
 
@@ -251,7 +251,7 @@ def test_openai_chat_completions_endpoint(api_client, monkeypatch):
     monkeypatch.setattr(
         inference_service,
         "chat",
-        lambda messages, max_tokens=None, temperature=None, top_p=None: ("Hello from MLX", {}),
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("Hello from MLX", {}),
     )
 
     resp = api_client.post(
@@ -272,6 +272,7 @@ def test_openai_chat_completions_endpoint(api_client, monkeypatch):
     assert data["choices"][0]["message"]["content"] == "Hello from MLX"
     assert data["choices"][0]["finish_reason"] == "stop"
     assert data["usage"]["total_tokens"] >= data["usage"]["prompt_tokens"]
+    assert data["x_metrics"] is None
 
 
 def test_openai_chat_completions_streaming(api_client, monkeypatch):
@@ -303,21 +304,38 @@ def test_openai_chat_completions_streaming(api_client, monkeypatch):
         lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: iter(
             [
                 ("Hello", None),
-                (" world", {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4, "finish_reason": "stop"}),
+                (
+                    " world",
+                    {
+                        "prompt_tokens": 2,
+                        "completion_tokens": 2,
+                        "total_tokens": 4,
+                        "finish_reason": "stop",
+                        "metrics": {
+                            "total_duration_s": 1.25,
+                            "prompt_eval_duration_s": 0.25,
+                            "prompt_eval_rate": 8.0,
+                            "eval_duration_s": 1.0,
+                            "eval_rate": 2.0,
+                        },
+                    },
+                ),
             ]
         ),
     )
+    inference_service._last_load_duration_s = 0.5
 
     with api_client.stream(
         "POST",
-        "/v1/chat/completions",
-        json={
-            "model": "my-custom-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "stream": True,
-        },
-    ) as resp:
-        body = "".join(resp.iter_text())
+            "/v1/chat/completions",
+            json={
+                "model": "my-custom-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": True,
+                "verbose": True,
+            },
+        ) as resp:
+            body = "".join(resp.iter_text())
 
     assert resp.status_code == 200
     assert 'data: {"id": "chatcmpl-' in body
@@ -326,17 +344,18 @@ def test_openai_chat_completions_streaming(api_client, monkeypatch):
     assert '"delta": {"content": "Hello"}' in body
     assert '"finish_reason": "stop"' in body
     assert "data: [DONE]" in body
+    assert '"x_metrics": {"total_duration_s": 1.25, "load_duration_s": 0.5' in body
 
 
-def test_custom_chat_streaming_endpoint(api_client, monkeypatch):
-    """POST /api/v1/inference/chat should stream newline-delimited JSON chunks."""
-    from app.api import routes_inference
+def test_openai_chat_completions_verbose_non_streaming(api_client, monkeypatch):
+    """verbose=true should include timing metrics in the OpenAI response."""
+    from app.api import routes_openai
     from app.schemas.model import ModelInfo, ModelSource
     from app.main import inference_service
     from app.services.inference_service import InferenceService
 
     monkeypatch.setattr(
-        routes_inference._manager,
+        routes_openai._manager,
         "get_model",
         lambda name: ModelInfo(
             name=name,
@@ -357,29 +376,54 @@ def test_custom_chat_streaming_endpoint(api_client, monkeypatch):
         lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: iter(
             [
                 ("Hello", None),
-                (" world", {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4, "finish_reason": "stop"}),
+                (
+                    " world",
+                    {
+                        "prompt_tokens": 13,
+                        "completion_tokens": 43,
+                        "total_tokens": 56,
+                        "finish_reason": "stop",
+                        "metrics": {
+                            "total_duration_s": 1.256830584,
+                            "prompt_eval_duration_s": 0.267349292,
+                            "prompt_eval_rate": 48.63,
+                            "eval_duration_s": 0.890170291,
+                            "eval_rate": 48.31,
+                        },
+                    },
+                ),
             ]
         ),
     )
+    inference_service._last_load_duration_s = 0.094960042
 
-    with api_client.stream(
-        "POST",
-        "/api/v1/inference/chat",
+    resp = api_client.post(
+        "/v1/chat/completions",
         json={
             "model": "my-custom-model",
             "messages": [{"role": "user", "content": "Hello"}],
-            "stream": True,
+            "verbose": True,
         },
-    ) as resp:
-        lines = [line for line in resp.iter_lines() if line]
-
+    )
     assert resp.status_code == 200
-    chunks = [json.loads(line) for line in lines]
-    assert chunks[0]["text"] == "Hello"
-    assert chunks[0]["done"] is False
-    assert chunks[-1]["text"] == " world"
-    assert chunks[-1]["done"] is True
-    assert chunks[-1]["usage"]["finish_reason"] == "stop"
+    data = resp.json()
+    assert data["choices"][0]["message"]["content"] == "Hello world"
+    assert data["usage"]["prompt_tokens"] == 13
+    assert data["usage"]["completion_tokens"] == 43
+    assert data["x_metrics"]["total_duration_s"] == 1.256830584
+    assert data["x_metrics"]["load_duration_s"] == 0.094960042
+    assert data["x_metrics"]["prompt_eval_count"] == 13
+    assert data["x_metrics"]["eval_rate"] == 48.31
+
+
+def test_removed_custom_inference_routes_return_404(api_client):
+    """The legacy custom inference API should no longer be mounted."""
+    resp = api_client.post(
+        "/api/v1/inference/chat",
+        json={"model": "my-model", "messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert resp.status_code == 404
 
 
 def test_chat_session_uses_streaming(monkeypatch):
@@ -407,3 +451,59 @@ def test_chat_session_uses_streaming(monkeypatch):
 
     assert session._history[-1].role == Role.assistant
     assert session._history[-1].content == "Hello world"
+
+
+def test_chat_session_verbose_stats(monkeypatch):
+    """ChatSession should print verbose timing/token stats when enabled."""
+    from app.schemas.inference import ChatMessage, Role
+    from app.services.chat_session import ChatSession
+
+    prompts = iter(["Hello", "quit"])
+    printed: list[str] = []
+
+    monkeypatch.setattr("app.services.chat_session.Prompt.ask", lambda _: next(prompts))
+    monkeypatch.setattr(
+        "app.services.chat_session.console.print",
+        lambda *args, **kwargs: printed.append("" if not args else str(args[0])),
+    )
+
+    session = ChatSession(
+        model_path=Path("/tmp/fake-model"),
+        model_name="my-model",
+        verbose=True,
+    )
+    session._history = [ChatMessage(role=Role.system, content="You are helpful.")]
+    session._svc._last_load_duration_s = 0.094960042
+    monkeypatch.setattr(
+        session._svc,
+        "chat_stream",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: iter(
+            [
+                ("Hello", None),
+                (
+                    " world",
+                    {
+                        "prompt_tokens": 13,
+                        "completion_tokens": 43,
+                        "finish_reason": "stop",
+                        "metrics": {
+                            "total_duration_s": 1.256830584,
+                            "prompt_eval_duration_s": 0.267349292,
+                            "prompt_eval_rate": 48.63,
+                            "eval_duration_s": 0.890170291,
+                            "eval_rate": 48.31,
+                        },
+                    },
+                ),
+            ]
+        ),
+    )
+
+    session._loop()
+
+    stats_blocks = [entry for entry in printed if "total duration:" in entry]
+    assert len(stats_blocks) == 1
+    assert "total duration:       1.256830584s" in stats_blocks[0]
+    assert "load duration:        94.960042ms" in stats_blocks[0]
+    assert "prompt eval count:    13 token(s)" in stats_blocks[0]
+    assert "eval rate:            48.31 tokens/s" in stats_blocks[0]

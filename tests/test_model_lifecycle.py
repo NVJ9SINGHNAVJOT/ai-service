@@ -12,8 +12,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def test_generate_reuses_already_loaded_model(monkeypatch):
-    """Inference should not reload a model when the same one is already loaded."""
+def test_openai_chat_reuses_already_loaded_model(monkeypatch):
+    """Chat completions should not reload a model when the same one is already loaded."""
     from app.main import app, inference_service
     from app.services.inference_service import InferenceService
 
@@ -31,24 +31,24 @@ def test_generate_reuses_already_loaded_model(monkeypatch):
     )
     monkeypatch.setattr(
         inference_service,
-        "generate",
-        lambda prompt, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("ready", {}),
+        "chat",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("ready", {}),
     )
 
     with TestClient(app) as client:
         resp = client.post(
-            "/api/v1/inference/generate",
-            json={"model": "my-model", "prompt": "Hello"},
+            "/v1/chat/completions",
+            json={"model": "my-model", "messages": [{"role": "user", "content": "Hello"}]},
         )
 
     assert resp.status_code == 200
-    assert resp.json()["data"]["text"] == "ready"
+    assert resp.json()["choices"][0]["message"]["content"] == "ready"
     assert load_calls == []
 
 
-def test_generate_loads_requested_model_when_switching(monkeypatch):
-    """Inference should load a new model when a different one is requested."""
-    from app.api import routes_inference
+def test_openai_chat_loads_requested_model_when_switching(monkeypatch):
+    """Chat completions should load a new model when a different one is requested."""
+    from app.api import routes_openai
     from app.main import app, inference_service
     from app.schemas.model import ModelInfo, ModelSource
     from app.services.inference_service import InferenceService
@@ -61,7 +61,7 @@ def test_generate_loads_requested_model_when_switching(monkeypatch):
         property(lambda self: "old-model"),
     )
     monkeypatch.setattr(
-        routes_inference._manager,
+        routes_openai._manager,
         "get_model",
         lambda name: ModelInfo(
             name=name,
@@ -81,18 +81,18 @@ def test_generate_loads_requested_model_when_switching(monkeypatch):
     )
     monkeypatch.setattr(
         inference_service,
-        "generate",
-        lambda prompt, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("switched", {}),
+        "chat",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("switched", {}),
     )
 
     with TestClient(app) as client:
         resp = client.post(
-            "/api/v1/inference/generate",
-            json={"model": "new-model", "prompt": "Hello"},
+            "/v1/chat/completions",
+            json={"model": "new-model", "messages": [{"role": "user", "content": "Hello"}]},
         )
 
     assert resp.status_code == 200
-    assert resp.json()["data"]["text"] == "switched"
+    assert resp.json()["choices"][0]["message"]["content"] == "switched"
     assert load_calls == [("/tmp/new-model", "new-model")]
 
 

@@ -42,6 +42,7 @@ class ChatSession:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
+        verbose: bool = False,
     ) -> None:
         self.model_path = model_path
         self.model_name = model_name
@@ -50,6 +51,7 @@ class ChatSession:
         self.temperature = temperature
         self.top_p = top_p
         self.repetition_penalty = repetition_penalty
+        self.verbose = verbose
 
         self._svc = InferenceService()
         self._history: List[ChatMessage] = []
@@ -109,6 +111,7 @@ class ChatSession:
             console.print("\n[bold green]Assistant[/bold green]:")
             try:
                 chunks: list[str] = []
+                usage: Optional[dict] = None
                 for chunk, _usage in self._svc.chat_stream(
                     messages=self._history,
                     max_tokens=self.max_tokens,
@@ -117,6 +120,8 @@ class ChatSession:
                     repetition_penalty=self.repetition_penalty,
                 ):
                     chunks.append(chunk)
+                    if _usage is not None:
+                        usage = _usage
                     if chunk:
                         console.print(chunk, end="", markup=False, highlight=False)
                 response = "".join(chunks)
@@ -127,7 +132,42 @@ class ChatSession:
                 continue
 
             console.print()
+            if self.verbose:
+                self._print_verbose_stats(usage)
             console.print()
 
             # Append assistant reply to history
             self._history.append(ChatMessage(role=Role.assistant, content=response))
+
+    def _print_verbose_stats(self, usage: Optional[dict]) -> None:
+        """Print a compact inference summary similar to local LLM CLIs."""
+        usage = usage or {}
+        metrics = usage.get("metrics") or {}
+
+        lines = [
+            f"total duration:       {self._format_duration(metrics.get('total_duration_s'))}",
+            f"load duration:        {self._format_duration(self._svc.last_load_duration_s)}",
+            f"prompt eval count:    {self._format_token_count(usage.get('prompt_tokens'))}",
+            f"prompt eval duration: {self._format_duration(metrics.get('prompt_eval_duration_s'))}",
+            f"prompt eval rate:     {self._format_rate(metrics.get('prompt_eval_rate'))}",
+            f"eval count:           {self._format_token_count(usage.get('completion_tokens'))}",
+            f"eval duration:        {self._format_duration(metrics.get('eval_duration_s'))}",
+            f"eval rate:            {self._format_rate(metrics.get('eval_rate'))}",
+        ]
+        console.print("\n".join(lines), style="dim")
+
+    @staticmethod
+    def _format_duration(seconds: Optional[float]) -> str:
+        if seconds is None:
+            return "n/a"
+        if seconds < 1:
+            return f"{seconds * 1000:.6f}ms"
+        return f"{seconds:.9f}s"
+
+    @staticmethod
+    def _format_token_count(count: Optional[int]) -> str:
+        return f"{count} token(s)" if count is not None else "n/a"
+
+    @staticmethod
+    def _format_rate(rate: Optional[float]) -> str:
+        return f"{rate:.2f} tokens/s" if rate is not None else "n/a"

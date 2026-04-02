@@ -22,6 +22,7 @@ Design decisions
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any, Generator, List, Optional, Tuple
 
@@ -50,6 +51,7 @@ class InferenceService:
         self._loaded_name: Optional[str] = None
         self._model: Optional[Any] = None
         self._tokenizer: Optional[Any] = None
+        self._last_load_duration_s: Optional[float] = None
 
     # ── Properties ───────────────────────────────────────────────────────────
 
@@ -61,6 +63,11 @@ class InferenceService:
     @property
     def is_loaded(self) -> bool:
         return self._model is not None
+
+    @property
+    def last_load_duration_s(self) -> Optional[float]:
+        """Duration of the most recent successful model load, in seconds."""
+        return self._last_load_duration_s
 
     # ── Load / unload ────────────────────────────────────────────────────────
 
@@ -90,13 +97,16 @@ class InferenceService:
             logger.info("Loading model '%s' from %s …", model_name, model_path)
             try:
                 from mlx_lm import load as mlx_load  # type: ignore
+                started_at = time.perf_counter()
                 self._model, self._tokenizer = mlx_load(str(model_path))
+                self._last_load_duration_s = time.perf_counter() - started_at
                 self._loaded_name = model_name
                 logger.info("Model '%s' loaded successfully.", model_name)
             except Exception as exc:
                 self._model = None
                 self._tokenizer = None
                 self._loaded_name = None
+                self._last_load_duration_s = None
                 raise ModelLoadError(model_name, str(exc)) from exc
 
     def unload(self) -> Optional[str]:
@@ -121,6 +131,7 @@ class InferenceService:
         self._model = None
         self._tokenizer = None
         self._loaded_name = None
+        self._last_load_duration_s = None
         # MLX manages its own memory pool; there is no explicit free() call.
         # Removing all Python references allows the GC to release the memory.
 
@@ -194,6 +205,8 @@ class InferenceService:
             try:
                 from mlx_lm import stream_generate as mlx_stream_generate  # type: ignore
 
+                started_at = time.perf_counter()
+                first_token_at: Optional[float] = None
                 for response in mlx_stream_generate(
                     self._model,
                     self._tokenizer,
@@ -206,12 +219,26 @@ class InferenceService:
                     ),
                 ):
                     usage = None
+                    if first_token_at is None and getattr(response, "text", ""):
+                        first_token_at = time.perf_counter()
                     if response.finish_reason is not None:
+                        finished_at = time.perf_counter()
+                        prompt_tokens = int(response.prompt_tokens)
+                        completion_tokens = int(response.generation_tokens)
+                        prompt_eval_duration = max((first_token_at or finished_at) - started_at, 0.0)
+                        eval_duration = max(finished_at - (first_token_at or finished_at), 0.0)
                         usage = {
-                            "prompt_tokens": int(response.prompt_tokens),
-                            "completion_tokens": int(response.generation_tokens),
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
                             "total_tokens": int(response.prompt_tokens + response.generation_tokens),
                             "finish_reason": response.finish_reason,
+                            "metrics": {
+                                "total_duration_s": finished_at - started_at,
+                                "prompt_eval_duration_s": prompt_eval_duration,
+                                "prompt_eval_rate": (prompt_tokens / prompt_eval_duration) if prompt_eval_duration > 0 else None,
+                                "eval_duration_s": eval_duration,
+                                "eval_rate": (completion_tokens / eval_duration) if eval_duration > 0 else None,
+                            },
                         }
                     yield response.text, usage
             except Exception as exc:

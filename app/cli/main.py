@@ -237,6 +237,12 @@ def chat(
         "--repetition-penalty",
         help="Repetition penalty factor.",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print token and timing stats after each assistant reply.",
+    ),
 ) -> None:
     """Start an interactive terminal chat session with a local model."""
     from app.services.model_manager import ModelManager
@@ -260,6 +266,7 @@ def chat(
         temperature=temperature,
         top_p=top_p,
         repetition_penalty=repetition_penalty,
+        verbose=verbose,
     )
     session.run()
 

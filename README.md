@@ -5,7 +5,7 @@ A local AI service for Apple Silicon Macs, built on top of MLX-LM.
 This project gives you three things in one codebase:
 
 - a CLI to download, list, update, delete, and chat with local MLX models
-- a FastAPI server for model management and inference
+- a FastAPI server for model management and OpenAI-compatible inference
 - an OpenAI-compatible chat endpoint so other apps can call your local models using common SDKs
 
 It is designed for local development and learning, while still keeping the code structured enough to grow into a more production-like service.
@@ -51,7 +51,7 @@ This project is not trying to be a full distributed inference platform. It is in
 - Keep a registry of downloaded models
 - Support custom local model folders
 - Start interactive terminal chat
-- Run FastAPI-based inference endpoints
+- Run a FastAPI-based OpenAI-compatible inference API
 - Expose an OpenAI-compatible `/v1/chat/completions` endpoint
 - Support streaming in both CLI and API
 - Auto-load models on demand when an inference request arrives
@@ -74,7 +74,6 @@ app/
 ├── api/
 │   ├── routes_health.py
 │   ├── routes_models.py
-│   ├── routes_inference.py
 │   └── routes_openai.py
 ├── cli/
 │   └── main.py
@@ -449,13 +448,12 @@ Important:
 
 ## API Overview
 
-The API has three main groups of routes:
+The API has two main groups of routes:
 
 - health
 - model management
-- inference
 
-There is also an OpenAI-compatible layer for chat completions.
+The inference surface is OpenAI-compatible chat completions.
 
 ## API Endpoints
 
@@ -463,13 +461,8 @@ There is also an OpenAI-compatible layer for chat completions.
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/v1/models` | List all local models |
-| POST | `/api/v1/models/download` | Download a model |
-| POST | `/api/v1/models/update` | Update a downloaded model |
-| DELETE | `/api/v1/models/{model_name}` | Delete a model |
 | POST | `/api/v1/models/load` | Load a model into memory |
 | POST | `/api/v1/models/unload` | Unload the currently loaded model |
-| POST | `/api/v1/inference/generate` | Prompt-based text generation |
-| POST | `/api/v1/inference/chat` | Chat-style inference |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
 
 ## Health Endpoint
@@ -496,27 +489,6 @@ Example response:
 curl http://127.0.0.1:8000/api/v1/models
 ```
 
-### Download a model
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/models/download \
-  -H "Content-Type: application/json" \
-  -d '{
-    "repo_id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-    "force": false
-  }'
-```
-
-### Update a model
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/models/update \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "mlx-community__Llama-3.2-3B-Instruct-4bit"
-  }'
-```
-
 ### Load a model
 
 ```bash
@@ -533,111 +505,6 @@ curl -X POST http://127.0.0.1:8000/api/v1/models/load \
 curl -X POST http://127.0.0.1:8000/api/v1/models/unload \
   -H "Content-Type: application/json" \
   -d '{}'
-```
-
-### Delete a model
-
-```bash
-curl -X DELETE "http://127.0.0.1:8000/api/v1/models/mlx-community__Llama-3.2-3B-Instruct-4bit"
-```
-
-To allow deleting a custom model:
-
-```bash
-curl -X DELETE "http://127.0.0.1:8000/api/v1/models/my-custom-model?allow_custom=true"
-```
-
-## Inference API
-
-There are two styles of inference:
-
-- `generate`
-- `chat`
-
-### `generate` vs `chat`
-
-Use `generate` when you already have a plain prompt string and want a completion.
-
-Use `chat` when you want role-based messages such as:
-
-- `system`
-- `user`
-- `assistant`
-
-For most app development, `chat` is the better choice.
-
-## Prompt Generation Endpoint
-
-### Non-streaming request
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/inference/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
-    "prompt": "Write one sentence about local AI.",
-    "max_tokens": 100,
-    "temperature": 0.7
-  }'
-```
-
-### Streaming request
-
-This endpoint streams newline-delimited JSON.
-
-```bash
-curl -N http://127.0.0.1:8000/api/v1/inference/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
-    "prompt": "Write one sentence about local AI.",
-    "stream": true
-  }'
-```
-
-## Chat Endpoint
-
-### Non-streaming request
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/inference/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Say hello in one sentence."}
-    ],
-    "max_tokens": 100,
-    "temperature": 0.7
-  }'
-```
-
-### Streaming request
-
-```bash
-curl -N http://127.0.0.1:8000/api/v1/inference/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Write a short haiku about coding."}
-    ],
-    "stream": true
-  }'
-```
-
-Example streamed line shape:
-
-```json
-{"model":"mlx-community__Llama-3.2-3B-Instruct-4bit","text":"Hello","done":false,"usage":null}
-```
-
-Final streamed line includes usage:
-
-```json
-{"model":"mlx-community__Llama-3.2-3B-Instruct-4bit","text":" world","done":true,"usage":{"prompt_tokens":12,"completion_tokens":2,"total_tokens":14,"finish_reason":"stop"}}
 ```
 
 ## Sending Chat History
@@ -759,21 +626,27 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk", ...}
 data: [DONE]
 ```
 
-## Streaming Formats Summary
+## Verbose Metrics
 
-There are two streaming formats in this project.
+If you want server timing details similar to the CLI `--verbose` output, send:
 
-### Custom API streaming
+```json
+{
+  "verbose": true
+}
+```
 
-- endpoint: `/api/v1/inference/chat`
-- format: NDJSON
-- good for: simple backend consumption and `curl -N`
+On non-streaming requests, the response includes an `x_metrics` object alongside `usage`.
 
-### OpenAI-compatible streaming
+On streaming requests, the final SSE chunk includes `x_metrics`.
 
-- endpoint: `/v1/chat/completions`
-- format: SSE
-- good for: OpenAI SDK compatibility
+## API Docs
+
+When the server is running, FastAPI also exposes built-in docs:
+
+- `http://127.0.0.1:8000/docs`
+- `http://127.0.0.1:8000/redoc`
+- `http://127.0.0.1:8000/openapi.json`
 
 ## How Inference Works Internally
 
@@ -875,9 +748,8 @@ If you are still learning Python, this is a good order to read files:
 5. `app/services/inference_service.py`
 6. `app/services/chat_session.py`
 7. `app/api/routes_models.py`
-8. `app/api/routes_inference.py`
-9. `app/api/routes_openai.py`
-10. `app/main.py`
+8. `app/api/routes_openai.py`
+9. `app/main.py`
 
 Why this order helps:
 
@@ -950,7 +822,7 @@ You can:
 
 - manage models from CLI
 - chat locally in terminal
-- call your models through a custom REST API
+- call your models through an OpenAI-compatible API
 - use OpenAI-compatible SDKs against your local server
 - stream responses in both CLI and API
 

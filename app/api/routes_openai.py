@@ -21,6 +21,7 @@ from app.schemas.inference import (
     OpenAIChatCompletionMessage,
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
+    OpenAIResponseMetrics,
     OpenAIUsage,
 )
 from app.services.model_manager import ModelManager
@@ -69,6 +70,22 @@ def _sse_chunk(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def _build_verbose_metrics(usage: dict | None, load_duration_s: float | None) -> OpenAIResponseMetrics:
+    """Convert internal usage metadata into a stable API metrics shape."""
+    usage = usage or {}
+    metrics = usage.get("metrics") or {}
+    return OpenAIResponseMetrics(
+        total_duration_s=metrics.get("total_duration_s"),
+        load_duration_s=load_duration_s,
+        prompt_eval_count=usage.get("prompt_tokens"),
+        prompt_eval_duration_s=metrics.get("prompt_eval_duration_s"),
+        prompt_eval_rate=metrics.get("prompt_eval_rate"),
+        eval_count=usage.get("completion_tokens"),
+        eval_duration_s=metrics.get("eval_duration_s"),
+        eval_rate=metrics.get("eval_rate"),
+    )
+
+
 @router.post("/chat/completions", response_model=OpenAIChatCompletionResponse)
 async def create_chat_completion(
     body: OpenAIChatCompletionRequest,
@@ -85,6 +102,7 @@ async def create_chat_completion(
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
+    load_duration_s = inference_service.last_load_duration_s
 
     if body.stream:
         def sse_stream():
@@ -109,6 +127,7 @@ async def create_chat_completion(
                     max_tokens=body.max_tokens,
                     temperature=body.temperature,
                     top_p=body.top_p,
+                    repetition_penalty=body.repetition_penalty,
                 ):
                     payload = {
                         "id": completion_id,
@@ -123,6 +142,8 @@ async def create_chat_completion(
                             }
                         ],
                     }
+                    if body.verbose and usage is not None:
+                        payload["x_metrics"] = _build_verbose_metrics(usage, load_duration_s).model_dump()
                     yield _sse_chunk(payload)
 
                 yield "data: [DONE]\n\n"
@@ -134,12 +155,28 @@ async def create_chat_completion(
         return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
     try:
-        text, usage = inference_service.chat(
-            messages=body.messages,
-            max_tokens=body.max_tokens,
-            temperature=body.temperature,
-            top_p=body.top_p,
-        )
+        if body.verbose:
+            chunks: list[str] = []
+            usage: dict = {}
+            for chunk, stream_usage in inference_service.chat_stream(
+                messages=body.messages,
+                max_tokens=body.max_tokens,
+                temperature=body.temperature,
+                top_p=body.top_p,
+                repetition_penalty=body.repetition_penalty,
+            ):
+                chunks.append(chunk)
+                if stream_usage is not None:
+                    usage = stream_usage
+            text = "".join(chunks)
+        else:
+            text, usage = inference_service.chat(
+                messages=body.messages,
+                max_tokens=body.max_tokens,
+                temperature=body.temperature,
+                top_p=body.top_p,
+                repetition_penalty=body.repetition_penalty,
+            )
     except InferenceError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -166,4 +203,5 @@ async def create_chat_completion(
             )
         ],
         usage=response_usage,
+        x_metrics=_build_verbose_metrics(usage, load_duration_s) if body.verbose else None,
     )
