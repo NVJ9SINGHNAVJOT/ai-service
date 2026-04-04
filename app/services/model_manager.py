@@ -28,11 +28,15 @@ We deliberately avoid shelling out to `mlx_lm.convert` here because:
 from __future__ import annotations
 
 import json
+import ast
+import importlib.util
 import re
 import shutil
+from dataclasses import dataclass
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from app.config import Settings, settings as _default_settings
 from app.core.exceptions import (
@@ -42,6 +46,7 @@ from app.core.exceptions import (
     ModelBusyError,
     ModelNotFoundError,
     RegistryError,
+    UnsupportedModelError,
 )
 from app.core.logging import get_logger
 from app.schemas.model import ModelInfo, ModelSource, ModelState
@@ -51,6 +56,24 @@ logger = get_logger(__name__)
 
 # Files whose presence indicates a directory is likely a valid MLX/HF model.
 _MODEL_INDICATOR_FILES = {"config.json", "tokenizer_config.json"}
+
+
+@dataclass
+class ModelDiagnosis:
+    """Human-oriented troubleshooting snapshot for a local model."""
+
+    name: str
+    source: ModelSource
+    state: ModelState
+    loadable: bool
+    path: str
+    repo_id: Optional[str]
+    model_type: Optional[str]
+    effective_model_type: Optional[str]
+    supported_by_mlx: Optional[bool]
+    missing_files: List[str]
+    summary: str
+    recommendations: List[str]
 
 
 def _sanitize_repo_id(repo_id: str) -> str:
@@ -83,6 +106,97 @@ def _is_loadable(path: Path) -> bool:
         return False
     files = {f.name for f in path.iterdir()}
     return bool(_MODEL_INDICATOR_FILES & files)
+
+
+def _read_model_type(path: Path) -> Optional[str]:
+    """Best-effort read of the model_type from config.json."""
+    config_path = path / "config.json"
+    if not config_path.exists():
+        return None
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    model_type = data.get("model_type")
+    return model_type if isinstance(model_type, str) and model_type else None
+
+
+@lru_cache(maxsize=1)
+def _supported_mlx_model_types() -> Optional[Set[str]]:
+    """Return model backend names supported by the installed mlx_lm package."""
+    spec = importlib.util.find_spec("mlx_lm")
+    if spec is None or not spec.submodule_search_locations:
+        return None
+
+    root = Path(next(iter(spec.submodule_search_locations)))
+    models_dir = root / "models"
+    if not models_dir.exists():
+        return None
+
+    return {
+        path.stem
+        for path in models_dir.glob("*.py")
+        if path.stem != "__init__"
+    }
+
+
+@lru_cache(maxsize=1)
+def _mlx_model_remapping() -> Dict[str, str]:
+    """Parse MODEL_REMAPPING from the installed mlx_lm utils file without importing MLX."""
+    spec = importlib.util.find_spec("mlx_lm")
+    if spec is None or not spec.submodule_search_locations:
+        return {}
+
+    root = Path(next(iter(spec.submodule_search_locations)))
+    utils_path = root / "utils.py"
+    if not utils_path.exists():
+        return {}
+
+    try:
+        tree = ast.parse(utils_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return {}
+
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "MODEL_REMAPPING":
+                    try:
+                        value = ast.literal_eval(node.value)
+                    except (ValueError, SyntaxError):
+                        return {}
+                    if isinstance(value, dict):
+                        return {
+                            str(key): str(mapped)
+                            for key, mapped in value.items()
+                        }
+    return {}
+
+
+def _is_model_type_supported(path: Path) -> bool:
+    """
+    Return True when the model architecture appears supported by installed mlx_lm.
+
+    If support metadata cannot be determined, we return True to avoid false
+    negatives. The runtime loader remains the final source of truth.
+    """
+    supported = _supported_mlx_model_types()
+    if supported is None:
+        return True
+
+    model_type = _read_model_type(path)
+    if not model_type:
+        return True
+
+    effective_type = _mlx_model_remapping().get(model_type, model_type)
+    return effective_type in supported
+
+
+def _effective_model_type(model_type: Optional[str]) -> Optional[str]:
+    """Return the effective mlx_lm backend name after remapping."""
+    if not model_type:
+        return None
+    return _mlx_model_remapping().get(model_type, model_type)
 
 
 def _is_within_base(path: Path, base: Path) -> bool:
@@ -185,14 +299,15 @@ class ModelManager:
         """
         reg = registry_entry or {}
         raw_loadable = _is_loadable(path)
-        state = _resolve_model_state(raw_loadable, runtime_activity)
+        model_type_supported = _is_model_type_supported(path)
+        state = _resolve_model_state(raw_loadable, model_type_supported, runtime_activity)
         return ModelInfo(
             name=path.name,
             repo_id=reg.get("repo_id") or (runtime_activity.repo_id if runtime_activity else None),
             source=source,
             state=state,
             path=str(path.resolve()),
-            loadable=_resolve_loadable(raw_loadable, state),
+            loadable=_resolve_loadable(raw_loadable, model_type_supported, state),
             size_mb=_dir_size_mb(path),
             created_at=_parse_dt(reg.get("created_at")),
             updated_at=_parse_dt(reg.get("updated_at")),
@@ -271,11 +386,81 @@ class ModelManager:
         info = self.get_model(name)
         return Path(info.path)
 
+    def diagnose_model(self, name: str) -> ModelDiagnosis:
+        """Return a troubleshooting snapshot for one local model."""
+        info = self.get_model(name)
+        return self._diagnose_model_info(info)
+
+    def diagnose_models(self) -> List[ModelDiagnosis]:
+        """Return troubleshooting snapshots for all known local models."""
+        return [self._diagnose_model_info(info) for info in self.list_models()]
+
     def _ensure_model_not_busy(self, name: str) -> None:
         """Block mutating operations for models that are running or downloading."""
         info = self.get_model(name)
         if info.state in {ModelState.running, ModelState.downloading}:
             raise ModelBusyError(name, info.state.value)
+
+    def ensure_model_loadable(self, name: str) -> ModelInfo:
+        """Return model info or raise a clear error if the model is not loadable."""
+        info = self.get_model(name)
+        model_path = Path(info.path)
+
+        if not _is_loadable(model_path):
+            raise InvalidModelPathError(
+                f"Model '{name}' is missing expected files like config.json or tokenizer_config.json."
+            )
+
+        model_type = _read_model_type(model_path)
+        if model_type and not _is_model_type_supported(model_path):
+            raise UnsupportedModelError(name, model_type)
+
+        return info
+
+    def _diagnose_model_info(self, info: ModelInfo) -> ModelDiagnosis:
+        """Compute a CLI-friendly diagnosis for a model."""
+        model_path = Path(info.path)
+        model_type = _read_model_type(model_path)
+        effective_model_type = _effective_model_type(model_type)
+        supported_by_mlx = None if not model_type else _is_model_type_supported(model_path)
+        missing_files = [
+            filename for filename in sorted(_MODEL_INDICATOR_FILES) if not (model_path / filename).exists()
+        ]
+
+        recommendations: List[str] = []
+        if info.state == ModelState.downloading:
+            summary = "Download is still in progress."
+            recommendations.append("Wait for the download to finish, then run the doctor command again.")
+        elif info.state == ModelState.running:
+            summary = "Model is currently in use by another process."
+            recommendations.append("Stop the active chat or server process before modifying the model.")
+        elif missing_files:
+            summary = "Model directory is incomplete."
+            recommendations.append("Re-download the model or restore the missing files.")
+        elif model_type and supported_by_mlx is False:
+            summary = f"Installed mlx_lm does not support model_type '{model_type}'."
+            recommendations.append("Upgrade `mlx` and `mlx-lm`, or choose a model with a supported model_type.")
+        elif info.loadable:
+            summary = "Model looks ready to load."
+            recommendations.append("If loading still fails, run the raw `mlx_lm.generate` command to isolate runtime issues.")
+        else:
+            summary = "Model is not loadable."
+            recommendations.append("Check that the directory contains a complete Hugging Face / MLX model layout.")
+
+        return ModelDiagnosis(
+            name=info.name,
+            source=info.source,
+            state=info.state,
+            loadable=info.loadable,
+            path=info.path,
+            repo_id=info.repo_id,
+            model_type=model_type,
+            effective_model_type=effective_model_type,
+            supported_by_mlx=supported_by_mlx,
+            missing_files=missing_files,
+            summary=summary,
+            recommendations=recommendations,
+        )
 
     def download(self, repo_id: str, force: bool = False) -> ModelInfo:
         """
@@ -439,6 +624,7 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
 
 def _resolve_model_state(
     loadable: bool,
+    model_type_supported: bool,
     runtime_activity: Optional[RuntimeModelActivity],
 ) -> ModelState:
     """Derive the user-facing state from live activity and on-disk validity."""
@@ -446,13 +632,15 @@ def _resolve_model_state(
         return ModelState.downloading
     if runtime_activity and runtime_activity.running:
         return ModelState.running
+    if loadable and not model_type_supported:
+        return ModelState.unsupported
     if loadable:
         return ModelState.ready
     return ModelState.incomplete
 
 
-def _resolve_loadable(loadable: bool, state: ModelState) -> bool:
+def _resolve_loadable(loadable: bool, model_type_supported: bool, state: ModelState) -> bool:
     """Hide transiently incomplete models from the loadable column."""
     if state == ModelState.downloading:
         return False
-    return loadable
+    return loadable and model_type_supported

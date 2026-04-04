@@ -48,6 +48,17 @@ def _abort(message: str, code: int = 1) -> None:
     raise typer.Exit(code=code)
 
 
+def _style_for_state(state: str) -> str:
+    """Return a rich style name for a model lifecycle state."""
+    return {
+        "ready": "green",
+        "downloading": "yellow",
+        "running": "bold cyan",
+        "unsupported": "red",
+        "incomplete": "red",
+    }.get(state, "white")
+
+
 # ── models list ──────────────────────────────────────────────────────────────
 
 @models_app.command("list")
@@ -81,12 +92,7 @@ def models_list() -> None:
     table.add_column("Updated", style="dim")
 
     for m in model_list:
-        state_style = {
-            "ready": "green",
-            "downloading": "yellow",
-            "running": "bold cyan",
-            "incomplete": "red",
-        }.get(m.state.value, "white")
+        state_style = _style_for_state(m.state.value)
         loadable_icon = "✓" if m.loadable else "✗"
         loadable_style = "green" if m.loadable else "red"
         created = m.created_at.strftime("%Y-%m-%d") if m.created_at else "—"
@@ -100,6 +106,79 @@ def models_list() -> None:
             m.repo_id or "—",
             created,
             updated,
+        )
+
+    console.print(table)
+
+
+@models_app.command("doctor")
+def models_doctor(
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        "-n",
+        help="Inspect one local model. If omitted, inspects all local models.",
+    ),
+) -> None:
+    """Diagnose local model readiness and common runtime issues."""
+    from app.core.exceptions import ModelNotFoundError, RegistryError
+    from app.services.model_manager import ModelManager
+
+    manager = ModelManager()
+    try:
+        if name:
+            diagnosis = manager.diagnose_model(name)
+            table = Table(title=f"Model Doctor: {diagnosis.name}", show_lines=True)
+            table.add_column("Field", style="cyan", no_wrap=True)
+            table.add_column("Value")
+            table.add_row("Name", diagnosis.name)
+            table.add_row("Source", diagnosis.source.value)
+            table.add_row("State", f"[{_style_for_state(diagnosis.state.value)}]{diagnosis.state.value}[/{_style_for_state(diagnosis.state.value)}]")
+            table.add_row("Loadable", "[green]✓[/green]" if diagnosis.loadable else "[red]✗[/red]")
+            table.add_row("HF Repo", diagnosis.repo_id or "—")
+            table.add_row("Model Type", diagnosis.model_type or "—")
+            table.add_row("MLX Backend", diagnosis.effective_model_type or "—")
+            table.add_row(
+                "Supported By MLX",
+                "✓" if diagnosis.supported_by_mlx is True else ("✗" if diagnosis.supported_by_mlx is False else "—"),
+            )
+            table.add_row("Path", diagnosis.path)
+            table.add_row("Diagnosis", diagnosis.summary)
+            table.add_row("Missing Files", ", ".join(diagnosis.missing_files) if diagnosis.missing_files else "—")
+            console.print(table)
+            if diagnosis.recommendations:
+                console.print("\n[bold]Recommendations[/bold]")
+                for item in diagnosis.recommendations:
+                    console.print(f"- {item}")
+            return
+
+        diagnoses = manager.diagnose_models()
+    except ModelNotFoundError as exc:
+        _abort(str(exc))
+    except RegistryError as exc:
+        _abort(str(exc))
+
+    if not diagnoses:
+        console.print("[yellow]No models found.[/yellow]")
+        return
+
+    table = Table(title="Model Doctor", show_lines=True)
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("State")
+    table.add_column("Loadable", justify="center")
+    table.add_column("Model Type")
+    table.add_column("MLX Support", justify="center")
+    table.add_column("Diagnosis")
+
+    for diagnosis in diagnoses:
+        support = "✓" if diagnosis.supported_by_mlx is True else ("✗" if diagnosis.supported_by_mlx is False else "—")
+        table.add_row(
+            diagnosis.name,
+            f"[{_style_for_state(diagnosis.state.value)}]{diagnosis.state.value}[/{_style_for_state(diagnosis.state.value)}]",
+            "[green]✓[/green]" if diagnosis.loadable else "[red]✗[/red]",
+            diagnosis.model_type or "—",
+            support,
+            diagnosis.summary,
         )
 
     console.print(table)
@@ -262,16 +341,18 @@ def chat(
     """Start an interactive terminal chat session with a local model."""
     from app.services.model_manager import ModelManager
     from app.services.chat_session import ChatSession
-    from app.core.exceptions import ModelNotFoundError
+    from app.core.exceptions import InvalidModelPathError, ModelNotFoundError, UnsupportedModelError
 
     manager = ModelManager()
     try:
-        info = manager.get_model(model)
+        info = manager.ensure_model_loadable(model)
     except ModelNotFoundError:
         _abort(
             f"Model '{model}' not found.\n"
             "  Run `python -m app.cli.main models list` to see available models."
         )
+    except (InvalidModelPathError, UnsupportedModelError) as exc:
+        _abort(str(exc))
 
     session = ChatSession(
         model_path=Path(info.path),

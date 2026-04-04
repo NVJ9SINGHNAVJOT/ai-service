@@ -14,8 +14,10 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 
 from app.core.exceptions import (
+    InvalidModelPathError,
     ModelLoadError,
     ModelNotFoundError,
+    UnsupportedModelError,
 )
 from app.schemas.model import (
     APIResponse,
@@ -38,7 +40,7 @@ def _load_model_into_memory(name: str) -> None:
     """
     from app.main import inference_service
 
-    info = _manager.get_model(name)
+    info = _manager.ensure_model_loadable(name)
     inference_service.load(
         model_path=Path(info.path),
         model_name=info.name,
@@ -79,6 +81,8 @@ async def load_model(body: LoadModelRequest) -> APIResponse:
         )
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except (InvalidModelPathError, UnsupportedModelError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except ModelLoadError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:

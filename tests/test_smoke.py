@@ -130,6 +130,33 @@ def test_list_models_downloaded(manager, tmp_models_dir):
     assert m.state.value == "ready"
 
 
+def test_diagnose_model_reports_ready(manager, tmp_models_dir):
+    """Doctor should report a healthy model as ready to load."""
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__DoctorReady"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text('{"model_type":"gemma"}')
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__DoctorReady": {
+            "name": "mlx-community__DoctorReady",
+            "repo_id": "mlx-community/DoctorReady",
+            "path": str(fake_model),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    diagnosis = manager.diagnose_model("mlx-community__DoctorReady")
+
+    assert diagnosis.model_type == "gemma"
+    assert diagnosis.loadable is True
+    assert diagnosis.summary == "Model looks ready to load."
+    assert diagnosis.recommendations
+
+
 def test_list_models_includes_downloading_runtime_state(manager):
     """A model being downloaded should appear with state=downloading."""
     from app.services.model_runtime_state import ModelRuntimeState
@@ -176,6 +203,111 @@ def test_list_models_marks_loaded_model_as_running(manager, tmp_models_dir):
     m = next(m for m in models if m.name == "mlx-community__Qwen3.5-35B-A3B-4bit")
     assert m.state.value == "running"
     assert m.loadable is True
+
+
+def test_list_models_marks_unsupported_model_as_not_loadable(manager, tmp_models_dir, monkeypatch):
+    """A complete model with an unsupported architecture should not appear loadable."""
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__UnsupportedGemma4"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text('{"model_type":"gemma4"}')
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__UnsupportedGemma4": {
+            "name": "mlx-community__UnsupportedGemma4",
+            "repo_id": "mlx-community/UnsupportedGemma4",
+            "path": str(fake_model),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    monkeypatch.setattr(
+        "app.services.model_manager._supported_mlx_model_types",
+        lambda: {"gemma", "gemma2", "gemma3"},
+    )
+    monkeypatch.setattr(
+        "app.services.model_manager._mlx_model_remapping",
+        lambda: {},
+    )
+
+    models = manager.list_models()
+
+    m = next(m for m in models if m.name == "mlx-community__UnsupportedGemma4")
+    assert m.state.value == "unsupported"
+    assert m.loadable is False
+
+
+def test_ensure_model_loadable_rejects_unsupported_model(manager, tmp_models_dir, monkeypatch):
+    """Loading an unsupported architecture should fail before mlx_lm.load()."""
+    from app.core.exceptions import UnsupportedModelError
+
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__UnsupportedGemma4"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text('{"model_type":"gemma4"}')
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__UnsupportedGemma4": {
+            "name": "mlx-community__UnsupportedGemma4",
+            "repo_id": "mlx-community/UnsupportedGemma4",
+            "path": str(fake_model),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    monkeypatch.setattr(
+        "app.services.model_manager._supported_mlx_model_types",
+        lambda: {"gemma", "gemma2", "gemma3"},
+    )
+    monkeypatch.setattr(
+        "app.services.model_manager._mlx_model_remapping",
+        lambda: {},
+    )
+
+    with pytest.raises(UnsupportedModelError):
+        manager.ensure_model_loadable("mlx-community__UnsupportedGemma4")
+
+
+def test_diagnose_model_reports_unsupported_runtime(manager, tmp_models_dir, monkeypatch):
+    """Doctor should explain when mlx_lm lacks support for a model_type."""
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__UnsupportedGemma4"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text('{"model_type":"gemma4"}')
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__UnsupportedGemma4": {
+            "name": "mlx-community__UnsupportedGemma4",
+            "repo_id": "mlx-community/UnsupportedGemma4",
+            "path": str(fake_model),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    monkeypatch.setattr(
+        "app.services.model_manager._supported_mlx_model_types",
+        lambda: {"gemma", "gemma2", "gemma3"},
+    )
+    monkeypatch.setattr(
+        "app.services.model_manager._mlx_model_remapping",
+        lambda: {},
+    )
+
+    diagnosis = manager.diagnose_model("mlx-community__UnsupportedGemma4")
+
+    assert diagnosis.model_type == "gemma4"
+    assert diagnosis.supported_by_mlx is False
+    assert "does not support" in diagnosis.summary
+    assert diagnosis.recommendations
 
 
 def test_get_model_not_found(manager):
@@ -372,7 +504,7 @@ def test_openai_chat_completions_endpoint(api_client, monkeypatch):
 
     monkeypatch.setattr(
         routes_openai._manager,
-        "get_model",
+        "ensure_model_loadable",
         lambda name: ModelInfo(
             name=name,
             repo_id=None,
@@ -427,7 +559,7 @@ def test_openai_chat_completions_streaming(api_client, monkeypatch):
 
     monkeypatch.setattr(
         routes_openai._manager,
-        "get_model",
+        "ensure_model_loadable",
         lambda name: ModelInfo(
             name=name,
             repo_id=None,
@@ -499,7 +631,7 @@ def test_openai_chat_completions_verbose_non_streaming(api_client, monkeypatch):
 
     monkeypatch.setattr(
         routes_openai._manager,
-        "get_model",
+        "ensure_model_loadable",
         lambda name: ModelInfo(
             name=name,
             repo_id=None,

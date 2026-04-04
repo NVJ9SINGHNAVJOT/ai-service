@@ -24,6 +24,7 @@ class ModelState(str, Enum):
     ready = "ready"
     downloading = "downloading"
     running = "running"
+    unsupported = "unsupported"
     incomplete = "incomplete"
 
 

@@ -62,7 +62,7 @@ def test_openai_chat_loads_requested_model_when_switching(monkeypatch):
     )
     monkeypatch.setattr(
         routes_openai._manager,
-        "get_model",
+        "ensure_model_loadable",
         lambda name: ModelInfo(
             name=name,
             repo_id=None,

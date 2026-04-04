@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.core.exceptions import InferenceError, ModelLoadError, ModelNotFoundError
+from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
 from app.schemas.inference import (
     OpenAIChatCompletionChoice,
     OpenAIChatCompletionMessage,
@@ -38,13 +38,15 @@ def _ensure_model_loaded(model_name: str) -> None:
         return
 
     try:
-        info = _manager.get_model(model_name)
+        info = _manager.ensure_model_loadable(model_name)
         inference_service.load(
             model_path=Path(info.path),
             model_name=info.name,
         )
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except (InvalidModelPathError, UnsupportedModelError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except ModelLoadError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -72,3 +72,15 @@ class ModelBusyError(MLXManagerError):
         super().__init__(f"Model '{name}' is currently {state} and cannot be modified right now.")
         self.name = name
         self.state = state
+
+
+class UnsupportedModelError(MLXManagerError):
+    """Raised when the local MLX installation does not support a model architecture."""
+
+    def __init__(self, name: str, model_type: str) -> None:
+        super().__init__(
+            f"Model '{name}' is not supported by the installed mlx_lm runtime "
+            f"(unsupported model_type: '{model_type}')."
+        )
+        self.name = name
+        self.model_type = model_type

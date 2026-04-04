@@ -181,9 +181,23 @@ The registry stores metadata such as:
 When you run `task model:list`, the CLI combines registry timestamps with live
 runtime state and shows:
 
-- `State`: `ready`, `downloading`, `running`, or `incomplete`
+- `State`: `ready`, `downloading`, `running`, `unsupported`, or `incomplete`
+- `Loadable`: whether the model should be considered safe to load right now
 - `Created`: when the model was first registered
 - `Updated`: when the model was last registered or refreshed
+
+The states mean:
+
+- `ready`: the model directory looks complete and the installed `mlx_lm` runtime appears to support its `model_type`
+- `downloading`: files are still being written, so the model is not treated as loadable yet
+- `running`: another process currently has the model loaded
+- `unsupported`: the model files exist, but the installed `mlx_lm` runtime does not support that architecture
+- `incomplete`: the directory is missing expected files such as `config.json` or tokenizer metadata
+
+To help prevent data loss or confusing runtime behavior:
+
+- `update` and `delete` are blocked while a model is `running` or `downloading`
+- chat/API load paths fail early for `unsupported` or incomplete models with a clearer error message
 
 ### Custom models
 
@@ -307,6 +321,18 @@ task model:list
 task model:download MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
 ```
 
+### Diagnose models
+
+```bash
+task model:doctor
+task model:doctor MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
+```
+
+`model:doctor` is useful when a model appears in the list but still fails to
+load. It reports the model's `model_type`, mapped MLX backend, current state,
+missing files, whether the installed `mlx_lm` appears to support it, and a
+short recommendation.
+
 ### Start CLI chat
 
 ```bash
@@ -366,6 +392,7 @@ task run:cli
 
 ```bash
 task model:list
+task model:doctor
 task model:download MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
 task model:update MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
 task model:delete MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit FORCE=true
@@ -403,6 +430,13 @@ python -m app.cli.main models list
 
 ```bash
 python -m app.cli.main models download --repo mlx-community/Llama-3.2-3B-Instruct-4bit
+```
+
+### Diagnose models
+
+```bash
+python -m app.cli.main models doctor
+python -m app.cli.main models doctor --name mlx-community__Llama-3.2-3B-Instruct-4bit
 ```
 
 ### Update a model
@@ -782,6 +816,12 @@ Check:
 - the model folder exists under `models/downloaded/` or `models/custom/`
 - the folder contains expected files like `config.json` or tokenizer config
 
+If the model still looks wrong, run:
+
+```bash
+task model:doctor
+```
+
 ### A model downloads but will not load
 
 Possible reasons:
@@ -789,6 +829,36 @@ Possible reasons:
 - it is not actually an MLX-compatible model
 - the download is incomplete
 - the model files are not in the expected layout
+- the installed `mlx_lm` runtime does not support the model's `model_type`
+
+For example, a model can come from `mlx-community` on Hugging Face and still be
+`unsupported` locally if your installed `mlx_lm` version does not ship a loader
+for that architecture yet.
+
+To inspect one model directly, run:
+
+```bash
+task model:doctor MODEL=<local-model-name>
+```
+
+To compare your app against raw MLX behavior, run:
+
+```bash
+./.venv/bin/mlx_lm.generate --model /absolute/path/to/model --prompt "Hello" --max-tokens 32
+```
+
+If raw `mlx_lm` fails with the same error, the issue is in the installed MLX
+runtime rather than this repo's CLI wrapper.
+
+### Update or delete says the model is busy
+
+This is expected when the model is:
+
+- `running` in another chat or server process
+- `downloading` and still being written to disk
+
+Wait for the download to finish, or stop the process currently using the model,
+then retry the command.
 
 ### The OpenAI SDK connects but responses fail
 
