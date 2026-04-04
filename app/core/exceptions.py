@@ -63,3 +63,12 @@ class DownloadError(MLXManagerError):
 
 class RegistryError(MLXManagerError):
     """Raised on registry read/write failures."""
+
+
+class ModelBusyError(MLXManagerError):
+    """Raised when an operation is attempted on a model that is currently active."""
+
+    def __init__(self, name: str, state: str) -> None:
+        super().__init__(f"Model '{name}' is currently {state} and cannot be modified right now.")
+        self.name = name
+        self.state = state

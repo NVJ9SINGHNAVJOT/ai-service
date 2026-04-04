@@ -39,6 +39,7 @@ from app.core.exceptions import (
     DownloadError,
     InvalidModelPathError,
     ModelAlreadyExistsError,
+    ModelBusyError,
     ModelNotFoundError,
     RegistryError,
 )
@@ -270,6 +271,12 @@ class ModelManager:
         info = self.get_model(name)
         return Path(info.path)
 
+    def _ensure_model_not_busy(self, name: str) -> None:
+        """Block mutating operations for models that are running or downloading."""
+        info = self.get_model(name)
+        if info.state in {ModelState.running, ModelState.downloading}:
+            raise ModelBusyError(name, info.state.value)
+
     def download(self, repo_id: str, force: bool = False) -> ModelInfo:
         """
         Download an MLX-compatible HuggingFace model.
@@ -344,6 +351,7 @@ class ModelManager:
             ModelNotFoundError: if model is not found or not in registry.
             DownloadError: if re-download fails.
         """
+        self._ensure_model_not_busy(name)
         registry = self._load_registry()
         entry = registry.get(name)
         if entry is None:
@@ -387,6 +395,7 @@ class ModelManager:
             InvalidModelPathError: if attempting to delete a custom model without permission,
                                    or if the path is outside allowed directories.
         """
+        self._ensure_model_not_busy(name)
         info = self.get_model(name)
 
         if info.source == ModelSource.custom and not allow_custom:

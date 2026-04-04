@@ -235,6 +235,99 @@ def test_delete_custom_allowed(manager, tmp_models_dir):
     assert not custom.exists()
 
 
+def test_delete_running_model_blocked(manager, tmp_models_dir):
+    """Deleting a running model should fail with a busy error."""
+    from app.core.exceptions import ModelBusyError
+    from app.services.model_runtime_state import ModelRuntimeState
+
+    fake = tmp_models_dir / "downloaded" / "mlx-community__BusyDelete"
+    fake.mkdir()
+    (fake / "config.json").write_text("{}")
+    (fake / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__BusyDelete": {
+            "name": "mlx-community__BusyDelete",
+            "repo_id": "mlx-community/BusyDelete",
+            "path": str(fake),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    runtime_state = ModelRuntimeState(cfg=manager._cfg)
+    marker = runtime_state.mark_running("mlx-community__BusyDelete")
+    try:
+        with pytest.raises(ModelBusyError):
+            manager.delete("mlx-community__BusyDelete")
+    finally:
+        runtime_state.clear_marker(marker)
+
+
+def test_update_running_model_blocked(manager, tmp_models_dir):
+    """Updating a running model should fail with a busy error."""
+    from app.core.exceptions import ModelBusyError
+    from app.services.model_runtime_state import ModelRuntimeState
+
+    fake = tmp_models_dir / "downloaded" / "mlx-community__BusyUpdate"
+    fake.mkdir()
+    (fake / "config.json").write_text("{}")
+    (fake / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__BusyUpdate": {
+            "name": "mlx-community__BusyUpdate",
+            "repo_id": "mlx-community/BusyUpdate",
+            "path": str(fake),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    runtime_state = ModelRuntimeState(cfg=manager._cfg)
+    marker = runtime_state.mark_running("mlx-community__BusyUpdate")
+    try:
+        with pytest.raises(ModelBusyError):
+            manager.update("mlx-community__BusyUpdate")
+    finally:
+        runtime_state.clear_marker(marker)
+
+
+def test_delete_downloading_model_blocked(manager, tmp_models_dir):
+    """Deleting a downloading model should fail with a busy error."""
+    from app.core.exceptions import ModelBusyError
+    from app.services.model_runtime_state import ModelRuntimeState
+
+    fake = tmp_models_dir / "downloaded" / "mlx-community__BusyDownloadingDelete"
+    fake.mkdir()
+    (fake / "config.json").write_text("{}")
+    (fake / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__BusyDownloadingDelete": {
+            "name": "mlx-community__BusyDownloadingDelete",
+            "repo_id": "mlx-community/BusyDownloadingDelete",
+            "path": str(fake),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    runtime_state = ModelRuntimeState(cfg=manager._cfg)
+    marker = runtime_state.mark_downloading("mlx-community__BusyDownloadingDelete")
+    try:
+        with pytest.raises(ModelBusyError):
+            manager.delete("mlx-community__BusyDownloadingDelete")
+    finally:
+        runtime_state.clear_marker(marker)
+
+
 # ── Path traversal ────────────────────────────────────────────────────────────
 
 def test_path_traversal_blocked(manager):

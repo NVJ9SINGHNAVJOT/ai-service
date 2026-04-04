@@ -151,7 +151,7 @@ def models_update(
 ) -> None:
     """Re-download a model to get the latest version (delete + re-download)."""
     from app.services.model_manager import ModelManager
-    from app.core.exceptions import DownloadError, ModelNotFoundError, InvalidModelPathError
+    from app.core.exceptions import DownloadError, ModelBusyError, ModelNotFoundError, InvalidModelPathError
 
     manager = ModelManager()
     console.print(f"[dim]Updating model [cyan]{name}[/cyan]…[/dim]")
@@ -161,6 +161,8 @@ def models_update(
     except ModelNotFoundError as exc:
         _abort(str(exc))
     except InvalidModelPathError as exc:
+        _abort(str(exc))
+    except ModelBusyError as exc:
         _abort(str(exc))
     except DownloadError as exc:
         _abort(str(exc))
@@ -190,7 +192,7 @@ def models_delete(
 ) -> None:
     """Delete a local model. Only downloaded models are deleted by default."""
     from app.services.model_manager import ModelManager
-    from app.core.exceptions import ModelNotFoundError, InvalidModelPathError
+    from app.core.exceptions import ModelBusyError, ModelNotFoundError, InvalidModelPathError
 
     manager = ModelManager()
 
@@ -209,6 +211,8 @@ def models_delete(
     except ModelNotFoundError as exc:
         _abort(str(exc))
     except InvalidModelPathError as exc:
+        _abort(str(exc))
+    except ModelBusyError as exc:
         _abort(str(exc))
 
 
