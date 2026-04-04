@@ -30,6 +30,7 @@ from app.config import Settings, settings as _default_settings
 from app.core.exceptions import InferenceError, ModelLoadError
 from app.core.logging import get_logger
 from app.schemas.inference import ChatMessage, Role
+from app.services.model_runtime_state import ModelRuntimeState
 
 logger = get_logger(__name__)
 
@@ -52,6 +53,8 @@ class InferenceService:
         self._model: Optional[Any] = None
         self._tokenizer: Optional[Any] = None
         self._last_load_duration_s: Optional[float] = None
+        self._runtime_state = ModelRuntimeState(cfg=self._cfg)
+        self._running_marker: Optional[Path] = None
 
     # ── Properties ───────────────────────────────────────────────────────────
 
@@ -87,6 +90,8 @@ class InferenceService:
         """
         with self._lock:
             if self._loaded_name == model_name:
+                if self._running_marker is None:
+                    self._running_marker = self._runtime_state.mark_running(model_name)
                 logger.debug("Model '%s' is already loaded.", model_name)
                 return
 
@@ -101,12 +106,15 @@ class InferenceService:
                 self._model, self._tokenizer = mlx_load(str(model_path))
                 self._last_load_duration_s = time.perf_counter() - started_at
                 self._loaded_name = model_name
+                self._running_marker = self._runtime_state.mark_running(model_name)
                 logger.info("Model '%s' loaded successfully.", model_name)
             except Exception as exc:
                 self._model = None
                 self._tokenizer = None
                 self._loaded_name = None
                 self._last_load_duration_s = None
+                self._runtime_state.clear_marker(self._running_marker)
+                self._running_marker = None
                 raise ModelLoadError(model_name, str(exc)) from exc
 
     def unload(self) -> Optional[str]:
@@ -128,6 +136,8 @@ class InferenceService:
 
     def _unload_internal(self) -> None:
         """Internal unload without acquiring the lock (caller must hold it)."""
+        self._runtime_state.clear_marker(self._running_marker)
+        self._running_marker = None
         self._model = None
         self._tokenizer = None
         self._loaded_name = None

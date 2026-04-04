@@ -43,7 +43,8 @@ from app.core.exceptions import (
     RegistryError,
 )
 from app.core.logging import get_logger
-from app.schemas.model import ModelInfo, ModelSource
+from app.schemas.model import ModelInfo, ModelSource, ModelState
+from app.services.model_runtime_state import ModelRuntimeState, RuntimeModelActivity
 
 logger = get_logger(__name__)
 
@@ -106,6 +107,7 @@ class ModelManager:
     def __init__(self, cfg: Optional[Settings] = None) -> None:
         self._cfg = cfg or _default_settings
         self._cfg.ensure_directories()
+        self._runtime_state = ModelRuntimeState(cfg=self._cfg)
 
     # ── Registry helpers ─────────────────────────────────────────────────────
 
@@ -171,6 +173,7 @@ class ModelManager:
         path: Path,
         source: ModelSource,
         registry_entry: Optional[dict] = None,
+        runtime_activity: Optional[RuntimeModelActivity] = None,
     ) -> ModelInfo:
         """
         Build a ``ModelInfo`` instance from a model directory on disk.
@@ -180,12 +183,15 @@ class ModelManager:
         list output easier to keep consistent.
         """
         reg = registry_entry or {}
+        raw_loadable = _is_loadable(path)
+        state = _resolve_model_state(raw_loadable, runtime_activity)
         return ModelInfo(
             name=path.name,
-            repo_id=reg.get("repo_id"),
+            repo_id=reg.get("repo_id") or (runtime_activity.repo_id if runtime_activity else None),
             source=source,
+            state=state,
             path=str(path.resolve()),
-            loadable=_is_loadable(path),
+            loadable=_resolve_loadable(raw_loadable, state),
             size_mb=_dir_size_mb(path),
             created_at=_parse_dt(reg.get("created_at")),
             updated_at=_parse_dt(reg.get("updated_at")),
@@ -199,7 +205,9 @@ class ModelManager:
         Registry information is merged in for downloaded models.
         """
         registry = self._load_registry()
+        runtime_activity = self._runtime_state.snapshot()
         models: List[ModelInfo] = []
+        seen_names: set[str] = set()
 
         # Downloaded models
         dl_dir = self._cfg.downloaded_models_path
@@ -207,11 +215,13 @@ class ModelManager:
             for entry in sorted(dl_dir.iterdir()):
                 if not entry.is_dir():
                     continue
+                seen_names.add(entry.name)
                 models.append(
                     self._build_model_info(
                         path=entry,
                         source=ModelSource.downloaded,
                         registry_entry=registry.get(entry.name, {}),
+                        runtime_activity=runtime_activity.get(entry.name),
                     )
                 )
 
@@ -221,13 +231,28 @@ class ModelManager:
             for entry in sorted(custom_dir.iterdir()):
                 if not entry.is_dir():
                     continue
+                seen_names.add(entry.name)
                 models.append(
                     self._build_model_info(
                         path=entry,
                         source=ModelSource.custom,
+                        runtime_activity=runtime_activity.get(entry.name),
                     )
                 )
 
+        for name, activity in sorted(runtime_activity.items()):
+            if name in seen_names:
+                continue
+            models.append(
+                self._build_model_info(
+                    path=self._safe_downloaded_path(name),
+                    source=ModelSource.downloaded,
+                    registry_entry=registry.get(name, {}),
+                    runtime_activity=activity,
+                )
+            )
+
+        models.sort(key=lambda model: model.name.lower())
         return models
 
     def get_model(self, name: str) -> ModelInfo:
@@ -279,6 +304,7 @@ class ModelManager:
             shutil.rmtree(dest)
 
         logger.info("Downloading model '%s' → %s", repo_id, dest)
+        download_marker = self._runtime_state.mark_downloading(name, repo_id)
 
         kwargs: dict = {
             "repo_id": repo_id,
@@ -295,6 +321,8 @@ class ModelManager:
             if dest.exists():
                 shutil.rmtree(dest, ignore_errors=True)
             raise DownloadError(repo_id, str(exc)) from exc
+        finally:
+            self._runtime_state.clear_marker(download_marker)
 
         self._register(name, repo_id, dest)
         logger.info("Model '%s' downloaded successfully.", name)
@@ -398,3 +426,24 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return None
+
+
+def _resolve_model_state(
+    loadable: bool,
+    runtime_activity: Optional[RuntimeModelActivity],
+) -> ModelState:
+    """Derive the user-facing state from live activity and on-disk validity."""
+    if runtime_activity and runtime_activity.downloading:
+        return ModelState.downloading
+    if runtime_activity and runtime_activity.running:
+        return ModelState.running
+    if loadable:
+        return ModelState.ready
+    return ModelState.incomplete
+
+
+def _resolve_loadable(loadable: bool, state: ModelState) -> bool:
+    """Hide transiently incomplete models from the loadable column."""
+    if state == ModelState.downloading:
+        return False
+    return loadable

@@ -24,6 +24,9 @@ models/custom/
 # Keep registry tracked if desired — comment out to ignore:
 models/registry.json
 
+# Runtime files
+models/runtime/
+
 # IDE
 .idea/
 .vscode/

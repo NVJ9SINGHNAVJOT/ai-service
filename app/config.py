@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     downloaded_models_dir: str = "models/downloaded"
     custom_models_dir: str = "models/custom"
     model_registry_file: str = "models/registry.json"
+    model_runtime_dir: str = "models/runtime"
 
     # ── API server ──────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"
@@ -71,6 +72,11 @@ class Settings(BaseSettings):
         """Resolved absolute path to the registry JSON file."""
         return _resolve_path(self.model_registry_file)
 
+    @property
+    def runtime_path(self) -> Path:
+        """Resolved absolute path to the runtime state directory."""
+        return _resolve_path(self.model_runtime_dir)
+
     def ensure_directories(self) -> None:
         """
         Create the filesystem layout expected by the app.
@@ -81,6 +87,7 @@ class Settings(BaseSettings):
         self.downloaded_models_path.mkdir(parents=True, exist_ok=True)
         self.custom_models_path.mkdir(parents=True, exist_ok=True)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        self.runtime_path.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_path(path_str: str) -> Path:

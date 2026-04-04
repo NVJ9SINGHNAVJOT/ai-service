@@ -156,6 +156,13 @@ There are two model locations:
 - `models/downloaded/`
 - `models/custom/`
 
+There is also a runtime activity directory:
+
+- `models/runtime/`
+
+This stores tiny marker files used to expose live states in `task model:list`,
+such as `downloading` and `running`.
+
 ### Downloaded models
 
 These are models fetched through the app from Hugging Face using `huggingface_hub.snapshot_download()`.
@@ -170,6 +177,13 @@ The registry stores metadata such as:
 - original Hugging Face repo id
 - absolute path
 - timestamps
+
+When you run `task model:list`, the CLI combines registry timestamps with live
+runtime state and shows:
+
+- `State`: `ready`, `downloading`, `running`, or `incomplete`
+- `Created`: when the model was first registered
+- `Updated`: when the model was last registered or refreshed
 
 ### Custom models
 

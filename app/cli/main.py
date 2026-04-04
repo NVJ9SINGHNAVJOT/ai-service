@@ -73,21 +73,32 @@ def models_list() -> None:
     table = Table(title="Local AI Models", show_lines=True)
     table.add_column("Name", style="cyan", no_wrap=True)
     table.add_column("Source", style="magenta")
+    table.add_column("State")
     table.add_column("Loadable", justify="center")
     table.add_column("Size (MB)", justify="right")
     table.add_column("HF Repo", style="dim")
+    table.add_column("Created", style="dim")
     table.add_column("Updated", style="dim")
 
     for m in model_list:
+        state_style = {
+            "ready": "green",
+            "downloading": "yellow",
+            "running": "bold cyan",
+            "incomplete": "red",
+        }.get(m.state.value, "white")
         loadable_icon = "✓" if m.loadable else "✗"
         loadable_style = "green" if m.loadable else "red"
+        created = m.created_at.strftime("%Y-%m-%d") if m.created_at else "—"
         updated = m.updated_at.strftime("%Y-%m-%d") if m.updated_at else "—"
         table.add_row(
             m.name,
             m.source.value,
+            f"[{state_style}]{m.state.value}[/{state_style}]",
             f"[{loadable_style}]{loadable_icon}[/{loadable_style}]",
-            str(m.size_mb) if m.size_mb else "—",
+            str(m.size_mb) if m.size_mb is not None else "—",
             m.repo_id or "—",
+            created,
             updated,
         )
 

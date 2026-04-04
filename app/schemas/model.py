@@ -18,12 +18,22 @@ class ModelSource(str, Enum):
     custom = "custom"
 
 
+class ModelState(str, Enum):
+    """Current local lifecycle state of a model."""
+
+    ready = "ready"
+    downloading = "downloading"
+    running = "running"
+    incomplete = "incomplete"
+
+
 class ModelInfo(BaseModel):
     """Metadata about a single locally available model."""
 
     name: str = Field(..., description="Sanitised local folder name used as identifier")
     repo_id: Optional[str] = Field(None, description="Original HuggingFace repo ID, if known")
     source: ModelSource = Field(..., description="Whether the model was downloaded or added manually")
+    state: ModelState = Field(ModelState.ready, description="Current local lifecycle state")
     path: str = Field(..., description="Absolute path to the model directory")
     loadable: bool = Field(..., description="True if the directory contains the expected model files")
     size_mb: Optional[float] = Field(None, description="Approximate total size in MB")

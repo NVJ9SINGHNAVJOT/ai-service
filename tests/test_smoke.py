@@ -43,6 +43,7 @@ def manager(tmp_models_dir: Path, monkeypatch):
         downloaded_models_dir=str(tmp_models_dir / "downloaded"),
         custom_models_dir=str(tmp_models_dir / "custom"),
         model_registry_file=str(tmp_models_dir / "registry.json"),
+        model_runtime_dir=str(tmp_models_dir / "runtime"),
     )
     return ModelManager(cfg=cfg)
 
@@ -125,6 +126,55 @@ def test_list_models_downloaded(manager, tmp_models_dir):
     assert any(m.name == "mlx-community__TestModel" for m in models)
     m = next(m for m in models if m.name == "mlx-community__TestModel")
     assert m.repo_id == "mlx-community/TestModel"
+    assert m.loadable is True
+    assert m.state.value == "ready"
+
+
+def test_list_models_includes_downloading_runtime_state(manager):
+    """A model being downloaded should appear with state=downloading."""
+    from app.services.model_runtime_state import ModelRuntimeState
+
+    fake_model = manager._cfg.downloaded_models_path / "mlx-community__Gemma-4-e4b-it-bf16"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text("{}")
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    runtime_state = ModelRuntimeState(cfg=manager._cfg)
+    marker = runtime_state.mark_downloading(
+        "mlx-community__Gemma-4-e4b-it-bf16",
+        repo_id="mlx-community/gemma-4-e4b-it-bf16",
+    )
+    try:
+        models = manager.list_models()
+    finally:
+        runtime_state.clear_marker(marker)
+
+    assert any(m.name == "mlx-community__Gemma-4-e4b-it-bf16" for m in models)
+    m = next(m for m in models if m.name == "mlx-community__Gemma-4-e4b-it-bf16")
+    assert m.source.value == "downloaded"
+    assert m.state.value == "downloading"
+    assert m.loadable is False
+    assert m.repo_id == "mlx-community/gemma-4-e4b-it-bf16"
+
+
+def test_list_models_marks_loaded_model_as_running(manager, tmp_models_dir):
+    """A model with a live usage marker should appear with state=running."""
+    from app.services.model_runtime_state import ModelRuntimeState
+
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__Qwen3.5-35B-A3B-4bit"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text("{}")
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    runtime_state = ModelRuntimeState(cfg=manager._cfg)
+    marker = runtime_state.mark_running("mlx-community__Qwen3.5-35B-A3B-4bit")
+    try:
+        models = manager.list_models()
+    finally:
+        runtime_state.clear_marker(marker)
+
+    m = next(m for m in models if m.name == "mlx-community__Qwen3.5-35B-A3B-4bit")
+    assert m.state.value == "running"
     assert m.loadable is True
 
 
