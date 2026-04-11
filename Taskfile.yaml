@@ -129,6 +129,38 @@ tasks:
         fi
       - "{{.PYTHON}} -m app.cli.main chat --model {{.MODEL}} {{.CLI_ARGS}}"
 
+  model:chat-media:
+    desc: "Start an interactive media chat session via mlx-vlm. Usage: task model:chat-media MODEL=<local-name> [IMAGE=/path/to/image] [AUDIO=/path/to/audio]"
+    vars:
+      IMAGE: '{{.IMAGE | default ""}}'
+      AUDIO: '{{.AUDIO | default ""}}'
+      SYSTEM: '{{.SYSTEM | default ""}}'
+    cmds:
+      - |
+        if [ -z "{{.MODEL}}" ]; then
+          echo "ERROR: MODEL variable is required."
+          echo "Usage: task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16 IMAGE=/path/to/image.jpg"
+          exit 1
+        fi
+      - |
+        if [ -n "{{.IMAGE}}" ] && [ -n "{{.AUDIO}}" ] && [ -n "{{.SYSTEM}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --image {{.IMAGE}} --audio {{.AUDIO}} --system '{{.SYSTEM}}' {{.CLI_ARGS}}
+        elif [ -n "{{.IMAGE}}" ] && [ -n "{{.AUDIO}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --image {{.IMAGE}} --audio {{.AUDIO}} {{.CLI_ARGS}}
+        elif [ -n "{{.IMAGE}}" ] && [ -n "{{.SYSTEM}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --image {{.IMAGE}} --system '{{.SYSTEM}}' {{.CLI_ARGS}}
+        elif [ -n "{{.AUDIO}}" ] && [ -n "{{.SYSTEM}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --audio {{.AUDIO}} --system '{{.SYSTEM}}' {{.CLI_ARGS}}
+        elif [ -n "{{.IMAGE}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --image {{.IMAGE}} {{.CLI_ARGS}}
+        elif [ -n "{{.AUDIO}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --audio {{.AUDIO}} {{.CLI_ARGS}}
+        elif [ -n "{{.SYSTEM}}" ]; then
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} --system '{{.SYSTEM}}' {{.CLI_ARGS}}
+        else
+          {{.PYTHON}} -m app.cli.main chat-media --model {{.MODEL}} {{.CLI_ARGS}}
+        fi
+
   # ── Testing ──────────────────────────────────────────────────────────────
 
   test:

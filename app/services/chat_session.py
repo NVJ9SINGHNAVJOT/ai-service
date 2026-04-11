@@ -110,21 +110,7 @@ class ChatSession:
 
             console.print("\n[bold green]Assistant[/bold green]:")
             try:
-                chunks: list[str] = []
-                usage: Optional[dict] = None
-                for chunk, _usage in self._svc.chat_stream(
-                    messages=self._history,
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    repetition_penalty=self.repetition_penalty,
-                ):
-                    chunks.append(chunk)
-                    if _usage is not None:
-                        usage = _usage
-                    if chunk:
-                        console.print(chunk, end="", markup=False, highlight=False)
-                response = "".join(chunks)
+                response, usage, interrupted = self._stream_response()
             except InferenceError as exc:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 # Remove the failed user message so the conversation stays clean
@@ -132,12 +118,48 @@ class ChatSession:
                 continue
 
             console.print()
+            if interrupted:
+                if response:
+                    self._history.append(ChatMessage(role=Role.assistant, content=response))
+                else:
+                    # Remove the user message if nothing was generated before interruption.
+                    self._history.pop()
+                console.print("[yellow]Generation stopped. You can keep chatting.[/yellow]\n")
+                continue
+
             if self.verbose:
                 self._print_verbose_stats(usage)
             console.print()
 
             # Append assistant reply to history
             self._history.append(ChatMessage(role=Role.assistant, content=response))
+
+    def _stream_response(self) -> tuple[str, Optional[dict], bool]:
+        """
+        Stream one assistant reply.
+
+        Returns ``(response_text, usage, interrupted)`` so callers can decide
+        whether to keep the partial response when the user presses Ctrl+C.
+        """
+        chunks: list[str] = []
+        usage: Optional[dict] = None
+        try:
+            for chunk, _usage in self._svc.chat_stream(
+                messages=self._history,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                repetition_penalty=self.repetition_penalty,
+            ):
+                chunks.append(chunk)
+                if _usage is not None:
+                    usage = _usage
+                if chunk:
+                    console.print(chunk, end="", markup=False, highlight=False)
+        except KeyboardInterrupt:
+            return "".join(chunks), usage, True
+
+        return "".join(chunks), usage, False
 
     def _print_verbose_stats(self, usage: Optional[dict]) -> None:
         """Print a compact inference summary similar to local LLM CLIs."""

@@ -45,3 +45,9 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# tmp files
+tmp/
+
+# Postman
+postman/

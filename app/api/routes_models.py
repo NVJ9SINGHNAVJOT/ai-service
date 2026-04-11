@@ -38,9 +38,10 @@ def _load_model_into_memory(name: str) -> None:
     Keeping this in a small helper makes the route itself easier to read and
     avoids repeating the "look up path, convert to Path, then load" sequence.
     """
-    from app.main import inference_service
+    from app.main import inference_service, vision_inference_service
 
     info = _manager.ensure_model_loadable(name)
+    vision_inference_service.unload()
     inference_service.load(
         model_path=Path(info.path),
         model_name=info.name,
@@ -99,9 +100,9 @@ async def unload_model(body: UnloadModelRequest) -> APIResponse:
     If `name` is provided but does not match the currently loaded model,
     a 400 error is returned.
     """
-    from app.main import inference_service
+    from app.main import inference_service, vision_inference_service
 
-    current = inference_service.loaded_model_name
+    current = inference_service.loaded_model_name or vision_inference_service.loaded_model_name
 
     if body.name and current and body.name != current:
         raise HTTPException(
@@ -109,7 +110,7 @@ async def unload_model(body: UnloadModelRequest) -> APIResponse:
             detail=f"Model '{body.name}' is not currently loaded ('{current}' is).",
         )
 
-    unloaded = inference_service.unload()
+    unloaded = inference_service.unload() or vision_inference_service.unload()
     if unloaded:
         return APIResponse(
             success=True,

@@ -71,6 +71,7 @@ class ModelDiagnosis:
     model_type: Optional[str]
     effective_model_type: Optional[str]
     supported_by_mlx: Optional[bool]
+    input_modalities: List[str]
     missing_files: List[str]
     summary: str
     recommendations: List[str]
@@ -119,6 +120,55 @@ def _read_model_type(path: Path) -> Optional[str]:
         return None
     model_type = data.get("model_type")
     return model_type if isinstance(model_type, str) and model_type else None
+
+
+def _read_model_config(path: Path) -> dict:
+    """Best-effort read of config.json for diagnosis helpers."""
+    config_path = path / "config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _detect_input_modalities(path: Path) -> List[str]:
+    """
+    Infer supported input types from the model config.
+
+    This is a best-effort heuristic used for doctor output. It intentionally
+    favors being helpful over being overly strict.
+    """
+    config = _read_model_config(path)
+    model_type = str(config.get("model_type") or "").lower()
+    modalities = ["text"]
+
+    vision_keys = {
+        "vision_config",
+        "vision_tower",
+        "vision_encoder",
+        "image_token_index",
+        "num_image_tokens",
+        "mm_vision_tower",
+    }
+    vision_hints = ("vl", "vision", "llava", "paligemma", "mllama", "gemma4", "gemma3", "pixtral", "ocr")
+    if any(key in config for key in vision_keys) or any(hint in model_type for hint in vision_hints):
+        modalities.append("image")
+
+    audio_keys = {
+        "audio_config",
+        "audio_token_index",
+        "speech_config",
+        "audio_encoder",
+        "num_audio_tokens",
+    }
+    audio_hints = ("audio", "omni", "speech", "voice")
+    if any(key in config for key in audio_keys) or any(hint in model_type for hint in audio_hints):
+        modalities.append("audio")
+
+    return modalities
 
 
 @lru_cache(maxsize=1)
@@ -301,6 +351,7 @@ class ModelManager:
         raw_loadable = _is_loadable(path)
         model_type_supported = _is_model_type_supported(path)
         state = _resolve_model_state(raw_loadable, model_type_supported, runtime_activity)
+        input_modalities = _detect_input_modalities(path)
         return ModelInfo(
             name=path.name,
             repo_id=reg.get("repo_id") or (runtime_activity.repo_id if runtime_activity else None),
@@ -308,6 +359,7 @@ class ModelManager:
             state=state,
             path=str(path.resolve()),
             loadable=_resolve_loadable(raw_loadable, model_type_supported, state),
+            input_modalities=input_modalities,
             size_mb=_dir_size_mb(path),
             created_at=_parse_dt(reg.get("created_at")),
             updated_at=_parse_dt(reg.get("updated_at")),
@@ -417,12 +469,29 @@ class ModelManager:
 
         return info
 
+    def ensure_model_files_ready(self, name: str) -> ModelInfo:
+        """
+        Return model info when the on-disk files look complete enough to use.
+
+        This check intentionally does not enforce mlx-lm architecture support,
+        because a model may be unsupported by mlx-lm but still usable through
+        mlx-vlm or another runtime.
+        """
+        info = self.get_model(name)
+        model_path = Path(info.path)
+        if not _is_loadable(model_path):
+            raise InvalidModelPathError(
+                f"Model '{name}' is missing expected files like config.json or tokenizer_config.json."
+            )
+        return info
+
     def _diagnose_model_info(self, info: ModelInfo) -> ModelDiagnosis:
         """Compute a CLI-friendly diagnosis for a model."""
         model_path = Path(info.path)
         model_type = _read_model_type(model_path)
         effective_model_type = _effective_model_type(model_type)
         supported_by_mlx = None if not model_type else _is_model_type_supported(model_path)
+        input_modalities = _detect_input_modalities(model_path)
         missing_files = [
             filename for filename in sorted(_MODEL_INDICATOR_FILES) if not (model_path / filename).exists()
         ]
@@ -457,6 +526,7 @@ class ModelManager:
             model_type=model_type,
             effective_model_type=effective_model_type,
             supported_by_mlx=supported_by_mlx,
+            input_modalities=input_modalities,
             missing_files=missing_files,
             summary=summary,
             recommendations=recommendations,

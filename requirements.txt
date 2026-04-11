@@ -1,5 +1,6 @@
 # Core ML
-mlx-lm>=0.31.1
+mlx-lm>=0.31.2
+mlx-vlm>=0.4.3
 
 # API server
 fastapi>=0.135.2

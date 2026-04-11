@@ -10,6 +10,7 @@ These cover the in-memory rules that matter for request flow:
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 
 def test_openai_chat_reuses_already_loaded_model(monkeypatch):
@@ -133,3 +134,35 @@ def test_models_unload_endpoint_rejects_mismatched_name(monkeypatch):
 
     assert resp.status_code == 400
     assert "not currently loaded" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_openai_streaming_stops_when_client_disconnects():
+    """The streaming route should stop yielding chunks once the client disconnects."""
+    from app.api import routes_openai
+
+    class FakeRequest:
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls >= 2
+
+    request = FakeRequest()
+
+    async def collect():
+        yielded = []
+        if await request.is_disconnected():
+            return yielded
+        for chunk in routes_openai._stream_with_stop_sequences(iter([("Hello", None), (" world", None)]), []):
+            if await request.is_disconnected():
+                return yielded
+            yielded.append(chunk)
+            if await request.is_disconnected():
+                return yielded
+        return yielded
+
+    yielded = await collect()
+
+    assert yielded == []

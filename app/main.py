@@ -18,12 +18,14 @@ from app.config import settings
 from app.core.exceptions import MLXManagerError
 from app.core.logging import get_logger, setup_logging
 from app.services.inference_service import InferenceService
+from app.services.vision_inference_service import VisionInferenceService
 
 setup_logging()
 logger = get_logger(__name__)
 
 # Module-level singleton shared by all route handlers
 inference_service = InferenceService(cfg=settings)
+vision_inference_service = VisionInferenceService(cfg=settings)
 
 
 @asynccontextmanager
@@ -57,6 +59,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     name = inference_service.unload()
     if name:
         logger.info("Model '%s' unloaded on shutdown.", name)
+    vision_name = vision_inference_service.unload()
+    if vision_name:
+        logger.info("Vision model '%s' unloaded on shutdown.", vision_name)
     logger.info("AI Service shut down.")
 
 

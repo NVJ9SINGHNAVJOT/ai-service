@@ -37,6 +37,7 @@ class ModelInfo(BaseModel):
     state: ModelState = Field(ModelState.ready, description="Current local lifecycle state")
     path: str = Field(..., description="Absolute path to the model directory")
     loadable: bool = Field(..., description="True if the directory contains the expected model files")
+    input_modalities: list[str] = Field(default_factory=lambda: ["text"], description="Best-effort supported input types")
     size_mb: Optional[float] = Field(None, description="Approximate total size in MB")
     created_at: Optional[datetime] = Field(None, description="When the model was first registered")
     updated_at: Optional[datetime] = Field(None, description="When the model was last updated")

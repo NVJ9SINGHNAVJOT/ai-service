@@ -59,6 +59,25 @@ def _style_for_state(state: str) -> str:
     }.get(state, "white")
 
 
+def _style_for_input_kind(kind: str) -> str:
+    """Return a rich style name for a model input modality."""
+    return {
+        "text": "green",
+        "image": "bold cyan",
+        "audio": "magenta",
+    }.get(kind, "white")
+
+
+def _format_input_modalities(kinds: list[str]) -> str:
+    """Render input modalities as colored rich labels."""
+    if not kinds:
+        return "—"
+    return ", ".join(
+        f"[{_style_for_input_kind(kind)}]{kind}[/{_style_for_input_kind(kind)}]"
+        for kind in kinds
+    )
+
+
 # ── models list ──────────────────────────────────────────────────────────────
 
 @models_app.command("list")
@@ -138,6 +157,7 @@ def models_doctor(
             table.add_row("HF Repo", diagnosis.repo_id or "—")
             table.add_row("Model Type", diagnosis.model_type or "—")
             table.add_row("MLX Backend", diagnosis.effective_model_type or "—")
+            table.add_row("Inputs", _format_input_modalities(diagnosis.input_modalities))
             table.add_row(
                 "Supported By MLX",
                 "✓" if diagnosis.supported_by_mlx is True else ("✗" if diagnosis.supported_by_mlx is False else "—"),
@@ -167,6 +187,7 @@ def models_doctor(
     table.add_column("State")
     table.add_column("Loadable", justify="center")
     table.add_column("Model Type")
+    table.add_column("Inputs")
     table.add_column("MLX Support", justify="center")
     table.add_column("Diagnosis")
 
@@ -177,6 +198,7 @@ def models_doctor(
             f"[{_style_for_state(diagnosis.state.value)}]{diagnosis.state.value}[/{_style_for_state(diagnosis.state.value)}]",
             "[green]✓[/green]" if diagnosis.loadable else "[red]✗[/red]",
             diagnosis.model_type or "—",
+            _format_input_modalities(diagnosis.input_modalities),
             support,
             diagnosis.summary,
         )
@@ -365,6 +387,95 @@ def chat(
         verbose=verbose,
     )
     session.run()
+
+
+@cli.command("chat-media")
+def chat_media(
+    model: str = typer.Option(
+        ...,
+        "--model",
+        "-m",
+        help="Local (sanitised) model name to use for media prompting.",
+    ),
+    image: Optional[Path] = typer.Option(
+        None,
+        "--image",
+        "-i",
+        exists=False,
+        help="Optional path to an image file to preload before chat starts.",
+    ),
+    audio: Optional[Path] = typer.Option(
+        None,
+        "--audio",
+        "-a",
+        exists=False,
+        help="Optional path to an audio file to preload before chat starts.",
+    ),
+    system_prompt: Optional[str] = typer.Option(
+        None,
+        "--system",
+        "-s",
+        help="Optional system prompt to use for the media chat session.",
+    ),
+    max_tokens: int = typer.Option(
+        settings.default_max_tokens,
+        "--max-tokens",
+        help="Maximum number of tokens to generate.",
+    ),
+    temperature: float = typer.Option(
+        0.0,
+        "--temperature",
+        help="Sampling temperature.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print raw streamed text instead of panel output when supported by mlx-vlm.",
+    ),
+) -> None:
+    """Start an interactive media chat session via mlx-vlm."""
+    from app.core.exceptions import InvalidModelPathError, MediaChatError, ModelNotFoundError
+    from app.services.model_manager import ModelManager
+    from app.services.media_chat_session import MediaChatSession
+
+    manager = ModelManager()
+    try:
+        info = manager.ensure_model_files_ready(model)
+    except ModelNotFoundError:
+        _abort(
+            f"Model '{model}' not found.\n"
+            "  Run `python -m app.cli.main models list` to see available models."
+        )
+    except InvalidModelPathError as exc:
+        _abort(str(exc))
+
+    supported_inputs = set(info.input_modalities)
+    if image is not None and "image" not in supported_inputs:
+        _abort(f"Model '{model}' does not appear to support image input.")
+    if audio is not None and "audio" not in supported_inputs:
+        _abort(f"Model '{model}' does not appear to support audio input.")
+    if not ({"image", "audio"} & supported_inputs):
+        _abort(
+            f"Model '{model}' does not appear to support image or audio input.\n"
+            "  Use `python -m app.cli.main chat --model ...` for text-only chat."
+        )
+
+    session = MediaChatSession(
+        model_path=Path(info.path),
+        model_name=info.name,
+        image_path=image,
+        audio_path=audio,
+        allowed_modalities=info.input_modalities,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system_prompt=system_prompt,
+        verbose=verbose,
+    )
+    try:
+        session.run()
+    except MediaChatError as exc:
+        _abort(str(exc))
 
 
 # ── serve ─────────────────────────────────────────────────────────────────────

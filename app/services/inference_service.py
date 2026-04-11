@@ -347,7 +347,7 @@ class InferenceService:
         tokenizer = self._tokenizer
 
         # Convert Pydantic models to dicts for the HF template API
-        msg_dicts = [{"role": m.role.value, "content": m.content} for m in messages]
+        msg_dicts = [{"role": _openai_role_for_template(m.role), "content": m.content} for m in messages]
 
         if hasattr(tokenizer, "apply_chat_template"):
             try:
@@ -380,7 +380,7 @@ def _fallback_chat_format(messages: List[ChatMessage]) -> str:
     """
     parts: list[str] = []
     for msg in messages:
-        if msg.role == Role.system:
+        if msg.role in {Role.system, Role.developer}:
             parts.append(f"System: {msg.content}\n")
         elif msg.role == Role.user:
             parts.append(f"User: {msg.content}")
@@ -388,3 +388,10 @@ def _fallback_chat_format(messages: List[ChatMessage]) -> str:
             parts.append(f"Assistant: {msg.content}")
     parts.append("Assistant:")
     return "\n".join(parts)
+
+
+def _openai_role_for_template(role: Role) -> str:
+    """Map OpenAI roles onto the smaller role set most local chat templates expect."""
+    if role == Role.developer:
+        return Role.system.value
+    return role.value

@@ -84,3 +84,10 @@ class UnsupportedModelError(MLXManagerError):
         )
         self.name = name
         self.model_type = model_type
+
+
+class MediaChatError(MLXManagerError):
+    """Raised when a media chat invocation cannot be started or fails."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"Media chat failed: {detail}")

@@ -186,6 +186,10 @@ runtime state and shows:
 - `Created`: when the model was first registered
 - `Updated`: when the model was last registered or refreshed
 
+The `/api/v1/models` endpoint returns the same core metadata, including a
+best-effort `input_modalities` field such as `["text"]` or
+`["text", "image"]`.
+
 The states mean:
 
 - `ready`: the model directory looks complete and the installed `mlx_lm` runtime appears to support its `model_type`
@@ -330,13 +334,41 @@ task model:doctor MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
 
 `model:doctor` is useful when a model appears in the list but still fails to
 load. It reports the model's `model_type`, mapped MLX backend, current state,
-missing files, whether the installed `mlx_lm` appears to support it, and a
-short recommendation.
+estimated input modes such as `text`, `image`, and `audio`, missing files,
+whether the installed `mlx_lm` appears to support it, and a short
+recommendation.
 
 ### Start CLI chat
 
 ```bash
 task model:chat MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
+```
+
+During generation, press `Ctrl+C` to stop only the current reply. The session
+stays open so you can keep chatting.
+
+### Run media chat
+
+```bash
+task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16 IMAGE=/path/to/image.jpg
+```
+
+This starts an interactive multimodal chat session. You can preload an image or
+audio clip once, then keep typing follow-up questions in the terminal.
+It also supports `/image /path/to/new-image.jpg` and `/audio /path/to/new.wav`
+if you want to switch media without leaving the session.
+
+You can also start without initial media and load it later from inside the
+session:
+
+```bash
+task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16
+```
+
+You can preload audio too:
+
+```bash
+task model:chat-media MODEL=<local-model-name> AUDIO=/path/to/audio.wav
 ```
 
 ### Start the API server
@@ -397,6 +429,8 @@ task model:download MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
 task model:update MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
 task model:delete MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit FORCE=true
 task model:chat MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
+task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16 IMAGE=/path/to/image.jpg
+task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16
 ```
 
 ### Testing
@@ -439,6 +473,9 @@ python -m app.cli.main models doctor
 python -m app.cli.main models doctor --name mlx-community__Llama-3.2-3B-Instruct-4bit
 ```
 
+The doctor output also shows a color-coded `Inputs` hint so you can quickly
+see whether a model looks text-only or multimodal.
+
 ### Update a model
 
 ```bash
@@ -455,6 +492,26 @@ python -m app.cli.main models delete --name mlx-community__Llama-3.2-3B-Instruct
 
 ```bash
 python -m app.cli.main chat --model mlx-community__Llama-3.2-3B-Instruct-4bit
+```
+
+### Chat with image or audio
+
+```bash
+python -m app.cli.main chat-media \
+  --model mlx-community__gemma-4-e4b-bf16 \
+  --image /path/to/image.jpg
+```
+
+Or start first and load media later with `/image` or `/audio`:
+
+```bash
+python -m app.cli.main chat-media --model mlx-community__gemma-4-e4b-bf16
+```
+
+```bash
+python -m app.cli.main chat-media \
+  --model <local-model-name> \
+  --audio /path/to/audio.wav
 ```
 
 Optional chat settings:
@@ -494,6 +551,14 @@ Important:
 - the API server uses a separate shared `InferenceService`
 - they do not share the same loaded model instance or chat history across processes
 
+For image or audio prompts, use `chat-media` instead. It is an interactive
+mlx-vlm-powered wrapper intended for multimodal models.
+
+Use:
+
+- `task model:chat` for normal text-only terminal chat
+- `task model:chat-media` for image/audio + text prompts, with or without preloaded media
+
 ## API Overview
 
 The API has two main groups of routes:
@@ -502,6 +567,10 @@ The API has two main groups of routes:
 - model management
 
 The inference surface is OpenAI-compatible chat completions.
+
+Text-only requests run through `mlx-lm`. Requests that include image or audio
+content in OpenAI-style multimodal message parts are routed through `mlx-vlm`
+automatically.
 
 ## API Endpoints
 
@@ -528,6 +597,9 @@ Example response:
   "loaded_model": null
 }
 ```
+
+If a vision model is currently loaded for image requests, `loaded_model` will
+show that model too.
 
 ## Model Management API
 
@@ -579,6 +651,43 @@ General rule:
 - oldest first, newest last
 - include prior assistant replies if you want the model to remember them
 
+For text-only requests, each `content` value can stay a plain string.
+
+For image or audio requests, OpenAI-style multimodal `content` arrays are also accepted.
+The API currently supports:
+
+- `{"type": "text", "text": "..."}`
+- `{"type": "input_text", "text": "..."}`
+- `{"type": "image_url", "image_url": {"url": "..."}}`
+- `{"type": "input_image", "image_url": "..."}`
+- `{"type": "input_audio", "input_audio": {"data": "...", "format": "wav"}}`
+
+Example image request:
+
+```json
+{
+  "model": "mlx-community__gemma-4-e4b-bf16",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Describe this image in detail."},
+        {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}}
+      ]
+    }
+  ]
+}
+```
+
+When an image is present, the server uses `mlx-vlm` instead of `mlx-lm`, so
+make sure `mlx-vlm` is installed:
+
+```bash
+python -m pip install -U mlx-vlm
+```
+
+The same applies to audio-bearing chat completion requests.
+
 ## OpenAI Compatibility
 
 The server supports:
@@ -592,6 +701,15 @@ Use your local model name as the `model` value:
 ```text
 mlx-community__Llama-3.2-3B-Instruct-4bit
 ```
+
+Current compatibility rules for `/v1/chat/completions`:
+
+- implemented: `model`, `messages`, `developer` / `system` / `user` / `assistant` roles, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `repetition_penalty`, `stream`, `stop`, `n=1`, text/image/audio user inputs
+- accepted and ignored: `store`, `metadata`, `service_tier`, `seed`, `safety_identifier`, `stream_options`, `user`
+- rejected with `400`: `tools`, `tool_choice`, `parallel_tool_calls`, `function_call`, `prediction`, audio output config via `audio` or non-text `modalities`, `logprobs`, `top_logprobs`, non-zero `frequency_penalty`, non-zero `presence_penalty`, unknown extra fields
+
+This keeps the endpoint friendly to common OpenAI SDK request shapes while
+still failing clearly for advanced features that are not implemented here yet.
 
 ### Important note about API keys
 
@@ -624,6 +742,32 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
+### OpenAI Python Image Example
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="test-key",
+    base_url="http://127.0.0.1:8000/v1",
+)
+
+response = client.chat.completions.create(
+    model="mlx-community__gemma-4-e4b-bf16",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is in this image?"},
+                {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}},
+            ],
+        }
+    ],
+)
+
+print(response.choices[0].message.content)
+```
+
 ## OpenAI Node.js Example
 
 ```js
@@ -648,6 +792,10 @@ console.log(response.choices[0].message.content);
 ## OpenAI-Compatible Streaming
 
 The OpenAI-compatible endpoint uses Server-Sent Events.
+
+If the client disconnects during a streamed response, the server stops
+iterating the stream instead of continuing to send chunks to a dead
+connection.
 
 ### curl example
 
@@ -849,6 +997,38 @@ To compare your app against raw MLX behavior, run:
 
 If raw `mlx_lm` fails with the same error, the issue is in the installed MLX
 runtime rather than this repo's CLI wrapper.
+
+### I want to prompt a model with image or audio
+
+Use the media path rather than the normal text chat path:
+
+```bash
+task model:chat-media MODEL=<local-model-name> IMAGE=/path/to/image.jpg
+```
+
+If you prefer, you can also omit `IMAGE` and `AUDIO` and load them later with
+`/image` or `/audio` from
+inside the session:
+
+```bash
+task model:chat-media MODEL=<local-model-name>
+```
+
+This feature uses `mlx-vlm`, so make sure it is installed:
+
+```bash
+python -m pip install -U mlx-vlm
+```
+
+You can also provide an optional system prompt:
+
+```bash
+task model:chat-media MODEL=<local-model-name> IMAGE=/path/to/image.jpg SYSTEM="You are a helpful media assistant."
+```
+
+When you preload `IMAGE` or `AUDIO`, the CLI checks the model's advertised
+`input_modalities` first and fails early if the model does not appear to
+support that media type.
 
 ### Update or delete says the model is busy
 
