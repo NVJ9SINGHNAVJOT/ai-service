@@ -168,11 +168,6 @@ tasks:
     cmds:
       - "{{.PYTHON}} -m pytest tests/ -v"
 
-  test:smoke:
-    desc: "Run fast smoke and lifecycle tests"
-    cmds:
-      - "{{.PYTHON}} -m pytest tests/test_smoke.py tests/test_model_lifecycle.py -v"
-
   # ── Utility ──────────────────────────────────────────────────────────────
 
   clean:

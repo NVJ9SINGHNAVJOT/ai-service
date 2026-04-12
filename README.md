@@ -96,8 +96,11 @@ models/
 └── registry.json
 
 tests/
-├── test_smoke.py
-└── test_model_lifecycle.py
+├── conftest.py
+├── test_cli_chat.py
+├── test_media_chat.py
+├── test_models.py
+└── test_openai_api.py
 ```
 
 ## Architecture Overview
@@ -437,8 +440,9 @@ task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16
 
 ```bash
 task test
-task test:smoke
 ```
+
+Manual local-model verification steps live in [TESTING.md](/Users/navjot/Desktop/GitRepos/ai-service/TESTING.md).
 
 ### Cleanup
 
@@ -927,11 +931,8 @@ Or:
 python3 -m pytest tests/ -v
 ```
 
-Run the fast smoke and lifecycle tests:
-
-```bash
-task test:smoke
-```
+For real local-model verification with `model:doctor`, verbose text chat, and
+image chat using `./tmp/testing.jpg`, see [TESTING.md](/Users/navjot/Desktop/GitRepos/ai-service/TESTING.md).
 
 ## Learning Guide for This Codebase
 

@@ -15,7 +15,7 @@ router = APIRouter(tags=["health"])
 
 
 class HealthResponse(BaseModel):
-    """Minimal status payload used by uptime checks and smoke tests."""
+    """Minimal status payload used by uptime checks and automated tests."""
 
     status: str
     model_loaded: bool
