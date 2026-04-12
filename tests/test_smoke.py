@@ -1030,9 +1030,9 @@ def test_openai_chat_completions_verbose_non_streaming(api_client, monkeypatch):
 def test_openai_chat_completions_endpoint_accepts_multimodal_messages(api_client, monkeypatch):
     """POST /v1/chat/completions should route image requests through mlx-vlm."""
     from app.api import routes_openai
-    from app.main import inference_service, vision_inference_service
+    from app.main import inference_service, media_inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.vision_inference_service import VisionInferenceService
+    from app.services.media_inference_service import MediaInferenceService
 
     def should_not_use_text_loader(name):
         raise AssertionError("Text loader should not be used for image requests.")
@@ -1053,10 +1053,10 @@ def test_openai_chat_completions_endpoint_accepts_multimodal_messages(api_client
         ),
     )
     monkeypatch.setattr(inference_service, "unload", lambda: None)
-    monkeypatch.setattr(vision_inference_service, "load", lambda model_path, model_name: None)
-    monkeypatch.setattr(VisionInferenceService, "loaded_model_name", property(lambda self: None))
+    monkeypatch.setattr(media_inference_service, "load", lambda model_path, model_name: None)
+    monkeypatch.setattr(MediaInferenceService, "loaded_model_name", property(lambda self: None))
     monkeypatch.setattr(
-        vision_inference_service,
+        media_inference_service,
         "chat",
         lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: (
             "Vision response",
@@ -1088,11 +1088,11 @@ def test_openai_chat_completions_endpoint_accepts_multimodal_messages(api_client
 
 
 def test_openai_chat_completions_streaming_accepts_input_image_parts(api_client, monkeypatch):
-    """Streaming multimodal requests should emit SSE chunks through the vision service."""
+    """Streaming multimodal requests should emit SSE chunks through the media service."""
     from app.api import routes_openai
-    from app.main import inference_service, vision_inference_service
+    from app.main import inference_service, media_inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.vision_inference_service import VisionInferenceService
+    from app.services.media_inference_service import MediaInferenceService
 
     def should_not_use_text_loader(name):
         raise AssertionError("Text loader should not be used for image requests.")
@@ -1113,10 +1113,10 @@ def test_openai_chat_completions_streaming_accepts_input_image_parts(api_client,
         ),
     )
     monkeypatch.setattr(inference_service, "unload", lambda: None)
-    monkeypatch.setattr(vision_inference_service, "load", lambda model_path, model_name: None)
-    monkeypatch.setattr(VisionInferenceService, "loaded_model_name", property(lambda self: None))
+    monkeypatch.setattr(media_inference_service, "load", lambda model_path, model_name: None)
+    monkeypatch.setattr(MediaInferenceService, "loaded_model_name", property(lambda self: None))
     monkeypatch.setattr(
-        vision_inference_service,
+        media_inference_service,
         "chat_stream",
         lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: iter(
             [
@@ -1140,7 +1140,7 @@ def test_openai_chat_completions_streaming_accepts_input_image_parts(api_client,
             ]
         ),
     )
-    vision_inference_service._last_load_duration_s = 0.3
+    media_inference_service._last_load_duration_s = 0.3
 
     with api_client.stream(
         "POST",
@@ -1172,9 +1172,9 @@ def test_openai_chat_completions_streaming_accepts_input_image_parts(api_client,
 def test_openai_chat_completions_endpoint_accepts_input_audio_parts(api_client, monkeypatch):
     """Audio-bearing requests should use the mlx-vlm service for chat completions."""
     from app.api import routes_openai
-    from app.main import inference_service, vision_inference_service
+    from app.main import inference_service, media_inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.vision_inference_service import VisionInferenceService
+    from app.services.media_inference_service import MediaInferenceService
 
     def should_not_use_text_loader(name):
         raise AssertionError("Text loader should not be used for audio requests.")
@@ -1196,10 +1196,10 @@ def test_openai_chat_completions_endpoint_accepts_input_audio_parts(api_client, 
         ),
     )
     monkeypatch.setattr(inference_service, "unload", lambda: None)
-    monkeypatch.setattr(vision_inference_service, "load", lambda model_path, model_name: None)
-    monkeypatch.setattr(VisionInferenceService, "loaded_model_name", property(lambda self: None))
+    monkeypatch.setattr(media_inference_service, "load", lambda model_path, model_name: None)
+    monkeypatch.setattr(MediaInferenceService, "loaded_model_name", property(lambda self: None))
     monkeypatch.setattr(
-        vision_inference_service,
+        media_inference_service,
         "chat",
         lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: (
             "Audio response",

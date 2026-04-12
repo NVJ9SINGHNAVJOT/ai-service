@@ -25,10 +25,10 @@ class HealthResponse(BaseModel):
 @router.get("/health", response_model=HealthResponse, summary="Health check")
 async def health() -> HealthResponse:
     """Return server health and currently loaded model info."""
-    from app.main import inference_service, vision_inference_service  # imported here to avoid circular imports
+    from app.main import inference_service, media_inference_service  # imported here to avoid circular imports
 
-    loaded_model = inference_service.loaded_model_name or vision_inference_service.loaded_model_name
-    model_loaded = inference_service.is_loaded or vision_inference_service.is_loaded
+    loaded_model = inference_service.loaded_model_name or media_inference_service.loaded_model_name
+    model_loaded = inference_service.is_loaded or media_inference_service.is_loaded
 
     return HealthResponse(
         status="ok",

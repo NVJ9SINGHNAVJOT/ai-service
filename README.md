@@ -598,7 +598,7 @@ Example response:
 }
 ```
 
-If a vision model is currently loaded for image requests, `loaded_model` will
+If a media model is currently loaded for image or audio requests, `loaded_model` will
 show that model too.
 
 ## Model Management API

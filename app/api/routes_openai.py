@@ -40,14 +40,14 @@ _IGNORED_CHAT_FIELDS = {
 
 def _ensure_model_loaded(model_name: str) -> None:
     """Auto-load the requested model if needed."""
-    from app.main import inference_service, vision_inference_service
+    from app.main import inference_service, media_inference_service
 
     if inference_service.loaded_model_name == model_name:
         return
 
     try:
         info = _manager.ensure_model_loadable(model_name)
-        vision_inference_service.unload()
+        media_inference_service.unload()
         inference_service.load(
             model_path=Path(info.path),
             model_name=info.name,
@@ -60,17 +60,17 @@ def _ensure_model_loaded(model_name: str) -> None:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-def _ensure_vision_model_loaded(model_name: str) -> None:
+def _ensure_media_model_loaded(model_name: str) -> None:
     """Auto-load the requested model into the shared mlx-vlm service if needed."""
-    from app.main import inference_service, vision_inference_service
+    from app.main import inference_service, media_inference_service
 
-    if vision_inference_service.loaded_model_name == model_name:
+    if media_inference_service.loaded_model_name == model_name:
         return
 
     try:
         info = _manager.ensure_model_files_ready(model_name)
         inference_service.unload()
-        vision_inference_service.load(
+        media_inference_service.load(
             model_path=Path(info.path),
             model_name=info.name,
         )
@@ -275,8 +275,8 @@ async def create_chat_completion(
 
     uses_vlm = _request_uses_vlm(body.messages)
     if uses_vlm:
-        _ensure_vision_model_loaded(body.model)
-        from app.main import vision_inference_service as active_service
+        _ensure_media_model_loaded(body.model)
+        from app.main import media_inference_service as active_service
     else:
         _ensure_model_loaded(body.model)
         from app.main import inference_service as active_service

@@ -1,5 +1,5 @@
 """
-VisionInferenceService — loads an mlx-vlm model and serves multimodal chat.
+MediaInferenceService — loads an mlx-vlm model and serves multimodal chat.
 
 This mirrors the text-only InferenceService closely so the OpenAI-compatible
 API can switch between `mlx_lm` and `mlx_vlm` based on whether a request
@@ -24,7 +24,7 @@ from app.services.model_runtime_state import ModelRuntimeState
 logger = get_logger(__name__)
 
 
-class VisionInferenceService:
+class MediaInferenceService:
     """Manages a single loaded mlx-vlm model for API inference."""
 
     def __init__(self, cfg: Optional[Settings] = None) -> None:
@@ -41,12 +41,12 @@ class VisionInferenceService:
 
     @property
     def loaded_model_name(self) -> Optional[str]:
-        """Name of the currently loaded vision model, or None."""
+        """Name of the currently loaded media model, or None."""
         return self._loaded_name
 
     @property
     def is_loaded(self) -> bool:
-        """Return True when a vision model is resident in memory."""
+        """Return True when a media model is resident in memory."""
         return self._model is not None
 
     @property
@@ -60,14 +60,14 @@ class VisionInferenceService:
             if self._loaded_name == model_name:
                 if self._running_marker is None:
                     self._running_marker = self._runtime_state.mark_running(model_name)
-                logger.debug("Vision model '%s' is already loaded.", model_name)
+                logger.debug("Media model '%s' is already loaded.", model_name)
                 return
 
             if self._model is not None:
-                logger.info("Unloading current vision model '%s' to load '%s'.", self._loaded_name, model_name)
+                logger.info("Unloading current media model '%s' to load '%s'.", self._loaded_name, model_name)
                 self._unload_internal()
 
-            logger.info("Loading vision model '%s' from %s …", model_name, model_path)
+            logger.info("Loading media model '%s' from %s …", model_name, model_path)
             try:
                 if importlib.util.find_spec("mlx_vlm") is None:
                     raise RuntimeError("`mlx-vlm` is not installed.")
@@ -83,7 +83,7 @@ class VisionInferenceService:
                 self._last_load_duration_s = time.perf_counter() - started_at
                 self._loaded_name = model_name
                 self._running_marker = self._runtime_state.mark_running(model_name)
-                logger.info("Vision model '%s' loaded successfully.", model_name)
+                logger.info("Media model '%s' loaded successfully.", model_name)
             except Exception as exc:
                 self._model = None
                 self._processor = None
@@ -96,7 +96,7 @@ class VisionInferenceService:
                 raise ModelLoadError(model_name, str(exc)) from exc
 
     def unload(self) -> Optional[str]:
-        """Unload the currently loaded vision model."""
+        """Unload the currently loaded media model."""
         with self._lock:
             name = self._loaded_name
             self._unload_internal()
@@ -104,7 +104,7 @@ class VisionInferenceService:
 
     def _require_loaded(self) -> None:
         if not self.is_loaded:
-            raise InferenceError("No vision model is currently loaded. Call load() first.")
+            raise InferenceError("No media model is currently loaded. Call load() first.")
 
     def _unload_internal(self) -> None:
         self._runtime_state.clear_marker(self._running_marker)
