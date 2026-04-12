@@ -5,6 +5,9 @@ Automated tests for model discovery, doctor output, and model-manager behavior.
 from __future__ import annotations
 
 import json
+import sys
+import types
+from pathlib import Path
 
 import pytest
 
@@ -212,6 +215,31 @@ def test_list_models_marks_unsupported_model_as_not_loadable(manager, tmp_models
 
     assert model.state.value == "unsupported"
     assert model.loadable is False
+
+
+def test_download_keyboard_interrupt_cleans_partial_dir_and_marker(manager, monkeypatch):
+    """Interrupting a download should remove partial files and live state."""
+    from app.core.exceptions import DownloadError
+
+    repo_id = "mlx-community/InterruptedModel"
+    local_name = "mlx-community__InterruptedModel"
+    dest = manager._cfg.downloaded_models_path / local_name
+
+    def fake_snapshot_download(**kwargs):
+        local_dir = Path(kwargs["local_dir"])
+        local_dir.mkdir(parents=True, exist_ok=True)
+        (local_dir / "config.json").write_text("{}")
+        raise KeyboardInterrupt
+
+    fake_hf = types.ModuleType("huggingface_hub")
+    fake_hf.snapshot_download = fake_snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hf)
+
+    with pytest.raises(DownloadError, match="interrupted by user"):
+        manager.download(repo_id)
+
+    assert not dest.exists()
+    assert manager._runtime_state.snapshot() == {}
 
 
 def test_ensure_model_loadable_rejects_unsupported_model(manager, tmp_models_dir, monkeypatch):

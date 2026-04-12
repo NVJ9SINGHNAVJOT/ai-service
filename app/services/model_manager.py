@@ -578,6 +578,12 @@ class ModelManager:
 
         try:
             snapshot_download(**kwargs)
+        except KeyboardInterrupt as exc:
+            # Treat user interruption like a failed download so partially
+            # written directories do not show up as usable models.
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            raise DownloadError(repo_id, "download interrupted by user") from exc
         except Exception as exc:
             # Clean up a partially downloaded directory
             if dest.exists():

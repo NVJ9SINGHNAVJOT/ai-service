@@ -14,6 +14,11 @@ from typing import Optional
 
 _DEFAULT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s — %(message)s"
 _DEFAULT_LEVEL = logging.INFO
+_QUIET_LIBRARIES = (
+    "httpx",
+    "httpcore",
+    "huggingface_hub",
+)
 
 
 def setup_logging(
@@ -27,6 +32,11 @@ def setup_logging(
         handlers=[logging.StreamHandler(sys.stdout)],
         force=True,
     )
+
+    # Keep third-party network chatter from breaking progress bars during
+    # long-running downloads while preserving normal app-level INFO logs.
+    for logger_name in _QUIET_LIBRARIES:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:
