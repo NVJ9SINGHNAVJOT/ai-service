@@ -250,7 +250,7 @@ def models_update(
         help="Local (sanitised) model name to update.",
     ),
 ) -> None:
-    """Re-download a model to get the latest version (delete + re-download)."""
+    """Re-download a model to get the latest version."""
     from app.services.model_manager import ModelManager
     from app.core.exceptions import DownloadError, ModelBusyError, ModelNotFoundError, InvalidModelPathError
 

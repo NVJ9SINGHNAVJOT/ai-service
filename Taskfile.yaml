@@ -92,7 +92,7 @@ tasks:
       - "{{.PYTHON}} -m app.cli.main models download --repo {{.MODEL}}"
 
   model:update:
-    desc: "Re-download (update) an existing model. Usage: task model:update MODEL=<local-name>"
+    desc: "Safely re-download (update) an existing model. Usage: task model:update MODEL=<local-name>"
     cmds:
       - |
         if [ -z "{{.MODEL}}" ]; then

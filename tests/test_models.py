@@ -445,6 +445,48 @@ def test_update_running_model_blocked(manager, tmp_models_dir):
         runtime_state.clear_marker(marker)
 
 
+def test_update_keyboard_interrupt_preserves_existing_model(manager, tmp_models_dir, monkeypatch):
+    """Interrupting an update should leave the existing model installed."""
+    from app.core.exceptions import DownloadError
+
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__InterruptedUpdate"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text('{"old": true}')
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__InterruptedUpdate": {
+            "name": "mlx-community__InterruptedUpdate",
+            "repo_id": "mlx-community/InterruptedUpdate",
+            "path": str(fake_model),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    registry_path = tmp_models_dir / "registry.json"
+    registry_path.write_text(json.dumps(registry))
+
+    def fake_snapshot_download(**kwargs):
+        local_dir = Path(kwargs["local_dir"])
+        local_dir.mkdir(parents=True, exist_ok=True)
+        (local_dir / "config.json").write_text('{"new": true}')
+        raise KeyboardInterrupt
+
+    fake_hf = types.ModuleType("huggingface_hub")
+    fake_hf.snapshot_download = fake_snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hf)
+
+    with pytest.raises(DownloadError, match="interrupted by user"):
+        manager.update("mlx-community__InterruptedUpdate")
+
+    assert fake_model.exists()
+    assert (fake_model / "config.json").read_text() == '{"old": true}'
+    assert json.loads(registry_path.read_text()) == registry
+    assert manager._runtime_state.snapshot() == {}
+    assert not any((tmp_models_dir / "runtime" / "updates").iterdir())
+
+
 def test_delete_downloading_model_blocked(manager, tmp_models_dir):
     """Deleting a downloading model should fail with a busy error."""
     from app.core.exceptions import ModelBusyError

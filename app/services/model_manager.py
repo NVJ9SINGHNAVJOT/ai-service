@@ -32,6 +32,7 @@ import ast
 import importlib.util
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from datetime import datetime, timezone
@@ -550,11 +551,6 @@ class ModelManager:
             ModelAlreadyExistsError: if model exists and force=False.
             DownloadError: if the download fails.
         """
-        try:
-            from huggingface_hub import snapshot_download
-        except ImportError as exc:
-            raise DownloadError(repo_id, "huggingface_hub is not installed") from exc
-
         name = _sanitize_repo_id(repo_id)
         dest = self._safe_downloaded_path(name)
 
@@ -565,32 +561,7 @@ class ModelManager:
             logger.info("Removing existing model directory for forced re-download: %s", dest)
             shutil.rmtree(dest)
 
-        logger.info("Downloading model '%s' → %s", repo_id, dest)
-        download_marker = self._runtime_state.mark_downloading(name, repo_id)
-
-        kwargs: dict = {
-            "repo_id": repo_id,
-            "local_dir": str(dest),
-            "local_dir_use_symlinks": False,
-        }
-        if self._cfg.hf_token:
-            kwargs["token"] = self._cfg.hf_token
-
-        try:
-            snapshot_download(**kwargs)
-        except KeyboardInterrupt as exc:
-            # Treat user interruption like a failed download so partially
-            # written directories do not show up as usable models.
-            if dest.exists():
-                shutil.rmtree(dest, ignore_errors=True)
-            raise DownloadError(repo_id, "download interrupted by user") from exc
-        except Exception as exc:
-            # Clean up a partially downloaded directory
-            if dest.exists():
-                shutil.rmtree(dest, ignore_errors=True)
-            raise DownloadError(repo_id, str(exc)) from exc
-        finally:
-            self._runtime_state.clear_marker(download_marker)
+        self._download_snapshot(repo_id, name, dest)
 
         self._register(name, repo_id, dest)
         logger.info("Model '%s' downloaded successfully.", name)
@@ -598,7 +569,7 @@ class ModelManager:
 
     def update(self, name: str) -> ModelInfo:
         """
-        Update a downloaded model by deleting and re-downloading it.
+        Update a downloaded model using a staged re-download.
 
         Requires the model to be in the registry (needs original repo_id).
 
@@ -629,16 +600,68 @@ class ModelManager:
             )
 
         repo_id = entry["repo_id"]
-        logger.info("Updating model '%s' (repo: %s) — delete + re-download", name, repo_id)
+        logger.info("Updating model '%s' (repo: %s) via staged re-download", name, repo_id)
 
-        # Delete existing files
         dest = self._safe_downloaded_path(name)
-        if dest.exists():
-            shutil.rmtree(dest)
-        self._unregister(name)
+        updates_dir = self._cfg.runtime_path / "updates"
+        updates_dir.mkdir(parents=True, exist_ok=True)
+        staged_dest = Path(tempfile.mkdtemp(prefix=f"{name}.", dir=str(updates_dir)))
+        backup_dest: Optional[Path] = None
 
-        # Re-download (force=True because we just deleted it)
-        return self.download(repo_id, force=True)
+        try:
+            self._download_snapshot(repo_id, name, staged_dest)
+
+            if dest.exists():
+                backup_dest = Path(tempfile.mkdtemp(prefix=f".{name}.backup.", dir=str(dest.parent)))
+                shutil.rmtree(backup_dest)
+                shutil.move(str(dest), str(backup_dest))
+
+            shutil.move(str(staged_dest), str(dest))
+            self._register(name, repo_id, dest)
+
+        except BaseException:
+            if backup_dest and backup_dest.exists() and not dest.exists():
+                shutil.move(str(backup_dest), str(dest))
+            raise
+        finally:
+            if staged_dest.exists():
+                shutil.rmtree(staged_dest, ignore_errors=True)
+            if backup_dest and backup_dest.exists():
+                shutil.rmtree(backup_dest, ignore_errors=True)
+
+        logger.info("Model '%s' updated successfully.", name)
+        return self.get_model(name)
+
+    def _download_snapshot(self, repo_id: str, name: str, dest: Path) -> None:
+        """Download a repository snapshot into ``dest`` and clean partial files."""
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise DownloadError(repo_id, "huggingface_hub is not installed") from exc
+
+        logger.info("Downloading model '%s' → %s", repo_id, dest)
+        download_marker = self._runtime_state.mark_downloading(name, repo_id)
+
+        kwargs: dict = {
+            "repo_id": repo_id,
+            "local_dir": str(dest),
+            "local_dir_use_symlinks": False,
+        }
+        if self._cfg.hf_token:
+            kwargs["token"] = self._cfg.hf_token
+
+        try:
+            snapshot_download(**kwargs)
+        except KeyboardInterrupt as exc:
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            raise DownloadError(repo_id, "download interrupted by user") from exc
+        except Exception as exc:
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            raise DownloadError(repo_id, str(exc)) from exc
+        finally:
+            self._runtime_state.clear_marker(download_marker)
 
     def delete(self, name: str, allow_custom: bool = False) -> None:
         """
