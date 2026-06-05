@@ -27,6 +27,9 @@ models/registry.json
 # Runtime files
 models/runtime/
 
+# Agents
+.claude/
+
 # IDE
 .idea/
 .vscode/
