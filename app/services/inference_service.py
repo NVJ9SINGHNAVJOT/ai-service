@@ -21,58 +21,36 @@ Design decisions
 
 from __future__ import annotations
 
-import threading
 import time
 from pathlib import Path
-from typing import Any, Generator, Iterable, List, Optional, Tuple
+from typing import Any, Generator, List, Optional, Tuple
 
-from app.config import Settings, settings as _default_settings
+from app.config import Settings
 from app.core.exceptions import InferenceError, ModelLoadError
 from app.core.logging import get_logger
 from app.schemas.inference import ChatMessage, Role
-from app.services.model_runtime_state import ModelRuntimeState
+from app.services.base_inference_service import LoadedModelService, openai_role_for_template
 
 logger = get_logger(__name__)
 
 
-class InferenceService:
+class InferenceService(LoadedModelService):
     """
-    Manages a single loaded MLX-LM model and exposes inference methods.
+    Manages a single loaded MLX-LM (text) model and exposes inference methods.
 
-    Thread-safety: a reentrant lock protects model load/unload operations.
-    Concurrent generate() calls on the same loaded model are NOT safe
-    (MLX is not thread-safe at the C level).  For a production multi-user
-    server you would add a request queue; this is fine for local single-user
-    use.
+    Lifecycle bookkeeping (lock, loaded-model state, runtime marker) lives in
+    :class:`LoadedModelService`; this subclass owns the mlx-lm specifics.
     """
 
     def __init__(self, cfg: Optional[Settings] = None) -> None:
-        self._cfg = cfg or _default_settings
-        self._lock = threading.RLock()
-        self._loaded_name: Optional[str] = None
-        self._model: Optional[Any] = None
+        super().__init__(cfg=cfg)
         self._tokenizer: Optional[Any] = None
-        self._last_load_duration_s: Optional[float] = None
-        self._runtime_state = ModelRuntimeState(cfg=self._cfg)
-        self._running_marker: Optional[Path] = None
-
-    # ── Properties ───────────────────────────────────────────────────────────
-
-    @property
-    def loaded_model_name(self) -> Optional[str]:
-        """Name of the currently loaded model, or None."""
-        return self._loaded_name
-
-    @property
-    def is_loaded(self) -> bool:
-        return self._model is not None
-
-    @property
-    def last_load_duration_s(self) -> Optional[float]:
-        """Duration of the most recent successful model load, in seconds."""
-        return self._last_load_duration_s
 
     # ── Load / unload ────────────────────────────────────────────────────────
+
+    def _release_backend(self) -> None:
+        """Drop the tokenizer handle on unload (model reference cleared by base)."""
+        self._tokenizer = None
 
     def load(self, model_path: Path, model_name: str) -> None:
         """
@@ -116,34 +94,6 @@ class InferenceService:
                 self._runtime_state.clear_marker(self._running_marker)
                 self._running_marker = None
                 raise ModelLoadError(model_name, str(exc)) from exc
-
-    def unload(self) -> Optional[str]:
-        """
-        Unload the currently loaded model and free memory.
-
-        Returns:
-            The name of the model that was unloaded, or None if nothing was loaded.
-        """
-        with self._lock:
-            name = self._loaded_name
-            self._unload_internal()
-            return name
-
-    def _require_loaded(self) -> None:
-        """Raise a consistent error if inference is requested before load()."""
-        if not self.is_loaded:
-            raise InferenceError("No model is currently loaded. Call load() first.")
-
-    def _unload_internal(self) -> None:
-        """Internal unload without acquiring the lock (caller must hold it)."""
-        self._runtime_state.clear_marker(self._running_marker)
-        self._running_marker = None
-        self._model = None
-        self._tokenizer = None
-        self._loaded_name = None
-        self._last_load_duration_s = None
-        # MLX manages its own memory pool; there is no explicit free() call.
-        # Removing all Python references allows the GC to release the memory.
 
     # ── Inference ────────────────────────────────────────────────────────────
 
@@ -441,27 +391,6 @@ class InferenceService:
 
     # ── Chat template helpers ────────────────────────────────────────────────
 
-    def _generation_kwargs(
-        self,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        repetition_penalty: Optional[float] = None,
-    ) -> dict:
-        """Build shared MLX generation keyword arguments."""
-        max_tokens = max_tokens or self._cfg.default_max_tokens
-        temperature = temperature if temperature is not None else self._cfg.default_temperature
-        top_p = top_p if top_p is not None else self._cfg.default_top_p
-        rep_pen = repetition_penalty if repetition_penalty is not None else self._cfg.default_repetition_penalty
-
-        from mlx_lm.sample_utils import make_logits_processors, make_sampler  # type: ignore
-
-        return {
-            "max_tokens": max_tokens,
-            "sampler": make_sampler(temp=temperature, top_p=top_p),
-            "logits_processors": make_logits_processors(repetition_penalty=rep_pen),
-        }
-
     def _apply_chat_template(self, messages: List[ChatMessage]) -> str:
         """
         Convert a list of ChatMessage objects to a single prompt string.
@@ -473,7 +402,7 @@ class InferenceService:
         tokenizer = self._tokenizer
 
         # Convert Pydantic models to dicts for the HF template API
-        msg_dicts = [{"role": _openai_role_for_template(m.role), "content": m.content} for m in messages]
+        msg_dicts = [{"role": openai_role_for_template(m.role), "content": m.content} for m in messages]
 
         if hasattr(tokenizer, "apply_chat_template"):
             try:
@@ -563,7 +492,7 @@ def _messages_for_user_first_template(messages: List[ChatMessage]) -> Optional[l
             continue
 
         content = msg.content if isinstance(msg.content, str) else msg.text_content()
-        rebuilt.append({"role": _openai_role_for_template(msg.role), "content": content or ""})
+        rebuilt.append({"role": openai_role_for_template(msg.role), "content": content or ""})
         if first_user_index is None and msg.role == Role.user:
             first_user_index = len(rebuilt) - 1
 
@@ -603,46 +532,6 @@ def _chat_stop_markers(tokenizer: Any) -> list[str]:
     return sorted(marker for marker in markers if marker)
 
 
-def _apply_chat_stop_markers(
-    chunks_with_usage: Iterable[Tuple[str, Optional[dict]]],
-    stop_markers: list[str],
-) -> Generator[Tuple[str, Optional[dict]], None, None]:
-    """
-    Trim model-specific end-of-turn markers from streamed chat output.
-
-    This mirrors the API-level stop-sequence handling so markers that span
-    chunk boundaries do not leak into the terminal or buffered responses.
-    """
-    if not stop_markers:
-        yield from chunks_with_usage
-        return
-
-    max_marker_len = max(len(item) for item in stop_markers)
-    pending = ""
-
-    for chunk, usage in chunks_with_usage:
-        pending += chunk
-        trimmed, found_stop = _split_at_first_stop_marker(pending, stop_markers)
-        if found_stop:
-            final_usage = usage
-            for _remaining_chunk, remaining_usage in chunks_with_usage:
-                if remaining_usage is not None:
-                    final_usage = remaining_usage
-            final_usage = {"finish_reason": "stop"} if final_usage is None else {**final_usage, "finish_reason": "stop"}
-            yield trimmed, final_usage
-            return
-
-        safe_len = max(0, len(pending) - (max_marker_len - 1))
-        if safe_len > 0:
-            safe_text = pending[:safe_len]
-            pending = pending[safe_len:]
-            if safe_text:
-                yield safe_text, usage
-
-    if pending:
-        yield pending, None
-
-
 def _split_at_first_stop_marker(text: str, stop_markers: list[str]) -> tuple[str, bool]:
     """Return text trimmed at the earliest matching stop marker."""
     first_index: Optional[int] = None
@@ -654,10 +543,3 @@ def _split_at_first_stop_marker(text: str, stop_markers: list[str]) -> tuple[str
     if first_index is None:
         return text, False
     return text[:first_index], True
-
-
-def _openai_role_for_template(role: Role) -> str:
-    """Map OpenAI roles onto the smaller role set most local chat templates expect."""
-    if role == Role.developer:
-        return Role.system.value
-    return role.value

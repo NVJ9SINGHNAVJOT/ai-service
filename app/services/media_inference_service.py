@@ -10,49 +10,40 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import threading
 import time
 from pathlib import Path
 from typing import Any, Generator, List, Optional, Tuple
 
-from app.config import Settings, settings as _default_settings
+from app.config import Settings
 from app.core.exceptions import InferenceError, ModelLoadError
 from app.core.logging import get_logger
 from app.schemas.inference import ChatMessage, Role
-from app.services.model_runtime_state import ModelRuntimeState
+from app.services.base_inference_service import LoadedModelService, openai_role_for_template
 
 logger = get_logger(__name__)
 
 
-class MediaInferenceService:
-    """Manages a single loaded mlx-vlm model for API inference."""
+class MediaInferenceService(LoadedModelService):
+    """
+    Manages a single loaded mlx-vlm (multimodal) model for API inference.
+
+    Lifecycle bookkeeping (lock, loaded-model state, runtime marker) lives in
+    :class:`LoadedModelService`; this subclass owns the mlx-vlm specifics.
+    """
+
+    _NOT_LOADED_MESSAGE = "No media model is currently loaded. Call load() first."
 
     def __init__(self, cfg: Optional[Settings] = None) -> None:
-        self._cfg = cfg or _default_settings
-        self._lock = threading.RLock()
-        self._loaded_name: Optional[str] = None
-        self._model: Optional[Any] = None
+        super().__init__(cfg=cfg)
         self._processor: Optional[Any] = None
         self._stream_generate: Optional[Any] = None
         self._apply_chat_template: Optional[Any] = None
-        self._last_load_duration_s: Optional[float] = None
-        self._runtime_state = ModelRuntimeState(cfg=self._cfg)
-        self._running_marker: Optional[Path] = None
 
-    @property
-    def loaded_model_name(self) -> Optional[str]:
-        """Name of the currently loaded media model, or None."""
-        return self._loaded_name
-
-    @property
-    def is_loaded(self) -> bool:
-        """Return True when a media model is resident in memory."""
-        return self._model is not None
-
-    @property
-    def last_load_duration_s(self) -> Optional[float]:
-        """Duration of the most recent successful model load, in seconds."""
-        return self._last_load_duration_s
+    def _release_backend(self) -> None:
+        """Drop mlx-vlm handles on unload (model reference cleared by base)."""
+        self._processor = None
+        self._stream_generate = None
+        self._apply_chat_template = None
 
     def load(self, model_path: Path, model_name: str) -> None:
         """Load an mlx-vlm model from disk."""
@@ -94,27 +85,6 @@ class MediaInferenceService:
                 self._runtime_state.clear_marker(self._running_marker)
                 self._running_marker = None
                 raise ModelLoadError(model_name, str(exc)) from exc
-
-    def unload(self) -> Optional[str]:
-        """Unload the currently loaded media model."""
-        with self._lock:
-            name = self._loaded_name
-            self._unload_internal()
-            return name
-
-    def _require_loaded(self) -> None:
-        if not self.is_loaded:
-            raise InferenceError("No media model is currently loaded. Call load() first.")
-
-    def _unload_internal(self) -> None:
-        self._runtime_state.clear_marker(self._running_marker)
-        self._running_marker = None
-        self._model = None
-        self._processor = None
-        self._stream_generate = None
-        self._apply_chat_template = None
-        self._loaded_name = None
-        self._last_load_duration_s = None
 
     def chat(
         self,
@@ -205,33 +175,12 @@ class MediaInferenceService:
             except Exception as exc:
                 raise InferenceError(str(exc)) from exc
 
-    def _generation_kwargs(
-        self,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        repetition_penalty: Optional[float] = None,
-    ) -> dict:
-        """Build shared generation keyword arguments for mlx-vlm."""
-        max_tokens = max_tokens or self._cfg.default_max_tokens
-        temperature = temperature if temperature is not None else self._cfg.default_temperature
-        top_p = top_p if top_p is not None else self._cfg.default_top_p
-        rep_pen = repetition_penalty if repetition_penalty is not None else self._cfg.default_repetition_penalty
-
-        from mlx_lm.sample_utils import make_logits_processors, make_sampler  # type: ignore
-
-        return {
-            "max_tokens": max_tokens,
-            "sampler": make_sampler(temp=temperature, top_p=top_p),
-            "logits_processors": make_logits_processors(repetition_penalty=rep_pen),
-        }
-
     @staticmethod
     def _prepare_messages(messages: List[ChatMessage]) -> List[dict]:
         """Convert request messages into the text-only payload expected by the template."""
         return [
             {
-                "role": _openai_role_for_template(message.role),
+                "role": openai_role_for_template(message.role),
                 "content": message.text_content(),
             }
             for message in messages
@@ -257,10 +206,3 @@ class MediaInferenceService:
             if images and audios:
                 break
         return images, audios
-
-
-def _openai_role_for_template(role: Role) -> str:
-    """Map OpenAI roles onto the smaller role set most local chat templates expect."""
-    if role == Role.developer:
-        return Role.system.value
-    return role.value

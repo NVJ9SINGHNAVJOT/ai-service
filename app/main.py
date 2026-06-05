@@ -65,13 +65,42 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("AI Service shut down.")
 
 
+_API_DESCRIPTION = """
+Local LLM management and inference server for Apple Silicon (MLX).
+
+**OpenAI-compatible** chat completions plus model lifecycle management. Every
+endpoint below ships interactive **Examples** that mirror the Postman collection
+(`postman/ai-service.postman_collection.json`), including the negative cases that
+return HTTP 400 — pick one from the *Examples* dropdown and hit **Try it out**.
+
+### Highlights
+- `POST /v1/chat/completions` — text, image, and audio chat; SSE streaming;
+  `verbose` timing metrics; OpenAI-style `stop` sequences.
+- `POST /api/v1/models/load` · `/unload` — swap the in-memory model.
+- `GET /api/v1/models` — list local models with state and input modalities.
+
+> Replace placeholder model names, image paths, and audio data in the examples
+> with values that exist on your machine before sending a request.
+"""
+
+_OPENAPI_TAGS = [
+    {"name": "health", "description": "Liveness check and currently loaded model."},
+    {"name": "models", "description": "List, load, and unload local models."},
+    {
+        "name": "openai-compatible",
+        "description": "OpenAI-compatible chat completions (text, multimodal, streaming).",
+    },
+]
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     app = FastAPI(
         title="AI Service",
-        description="Local LLM management and inference server for Apple Silicon.",
+        description=_API_DESCRIPTION,
         version="1.0.0",
         lifespan=lifespan,
+        openapi_tags=_OPENAPI_TAGS,
     )
 
     # CORS — allow all origins for local development; tighten in production

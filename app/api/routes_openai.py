@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
@@ -35,6 +35,196 @@ _IGNORED_CHAT_FIELDS = {
     "seed",
     "safety_identifier",
     "stream_options",
+}
+
+# Request scenarios surfaced in Swagger UI. These mirror the Postman collection
+# (postman/ai-service.postman_collection.json) so the interactive docs and the
+# Postman runner stay in lock-step. Replace the placeholder model names, image
+# path, and audio data with values that exist on your machine before sending.
+_CHAT_COMPLETION_EXAMPLES = {
+    "text": {
+        "summary": "Text — basic completion",
+        "description": "Basic text-only OpenAI-compatible chat completion.",
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [
+                {"role": "system", "content": "You are a concise assistant."},
+                {"role": "user", "content": "Say hello in one short sentence."},
+            ],
+        },
+    },
+    "developer_role_with_ignored_extras": {
+        "summary": "Developer role + ignored OpenAI extras",
+        "description": (
+            "Exercises the OpenAI-compatible subset: the `developer` role, the "
+            "`max_completion_tokens` alias, and safe extras (`store`, `metadata`, "
+            "`service_tier`, `seed`, `safety_identifier`, `stream_options`) that "
+            "are accepted but ignored locally."
+        ),
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [
+                {"role": "developer", "content": "You are terse and practical."},
+                {"role": "user", "content": "Reply with one line."},
+            ],
+            "store": False,
+            "metadata": {"origin": "swagger"},
+            "service_tier": "default",
+            "seed": 123,
+            "safety_identifier": "local-user-1",
+            "stream_options": {"include_usage": True},
+            "n": 1,
+            "max_completion_tokens": 128,
+        },
+    },
+    "verbose": {
+        "summary": "Verbose — return x_metrics",
+        "description": "Returns server-side timing metrics in `x_metrics` alongside the normal completion output.",
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [{"role": "user", "content": "Write a short haiku about coding."}],
+            "verbose": True,
+        },
+    },
+    "stop_sequence": {
+        "summary": "Stop sequence",
+        "description": "OpenAI-style `stop` support. The response text is trimmed before the stop sequence.",
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [
+                {"role": "user", "content": "Write a sentence that includes END and more text after it."}
+            ],
+            "stop": "END",
+        },
+    },
+    "streaming": {
+        "summary": "Streaming (SSE)",
+        "description": (
+            "Server-Sent Events streaming response. Send `Accept: text/event-stream` and inspect the "
+            "raw streamed body; frames are `data: {chunk}` lines terminated by `data: [DONE]`."
+        ),
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [{"role": "user", "content": "Stream a short reply."}],
+            "stream": True,
+            "verbose": True,
+        },
+    },
+    "image": {
+        "summary": "Image + text (multimodal)",
+        "description": "Image + text chat completion. Routed through mlx-vlm automatically because the message carries an image.",
+        "value": {
+            "model": "mlx-community__gemma-4-e4b-bf16",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this image in detail."},
+                        {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}},
+                    ],
+                }
+            ],
+        },
+    },
+    "audio": {
+        "summary": "Audio + text (multimodal)",
+        "description": "Audio + text chat completion. Routed through mlx-vlm automatically because the message carries audio.",
+        "value": {
+            "model": "mlx-community__gemma-4-e4b-bf16",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Transcribe or summarize this clip."},
+                        {"type": "input_audio", "input_audio": {"data": "base64-audio-data", "format": "wav"}},
+                    ],
+                }
+            ],
+        },
+    },
+    "image_streaming": {
+        "summary": "Image + text, streaming",
+        "description": "Streaming multimodal image request (SSE).",
+        "value": {
+            "model": "mlx-community__gemma-4-e4b-bf16",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What do you see here?"},
+                        {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}},
+                    ],
+                }
+            ],
+            "stream": True,
+            "verbose": True,
+        },
+    },
+    "tools_unsupported_400": {
+        "summary": "Negative — tools unsupported (400)",
+        "description": "`tools` is not supported by this local endpoint yet and returns HTTP 400.",
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [{"role": "user", "content": "Call a tool for this."}],
+            "tools": [{"type": "function", "function": {"name": "lookup_weather"}}],
+        },
+    },
+    "unknown_field_400": {
+        "summary": "Negative — unknown extra field (400)",
+        "description": "Unknown request fields are rejected with HTTP 400 instead of being silently ignored.",
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "totally_unknown_option": True,
+        },
+    },
+    "n_greater_than_one_400": {
+        "summary": "Negative — n > 1 unsupported (400)",
+        "description": "Only a single completion choice is supported; `n` > 1 returns HTTP 400.",
+        "value": {
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "n": 2,
+        },
+    },
+}
+
+# Reusable error envelope for OpenAPI response documentation.
+_ERROR_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"detail": {"type": "string", "description": "Human-readable error message."}},
+}
+_CHAT_COMPLETION_RESPONSES = {
+    400: {
+        "description": (
+            "Validation error — an unsupported or malformed field was sent "
+            "(e.g. `tools`, `n` > 1, an unknown field, or an invalid `stop`)."
+        ),
+        "content": {
+            "application/json": {
+                "schema": _ERROR_RESPONSE_SCHEMA,
+                "example": {"detail": "Field 'tools' is not supported by this local chat completions endpoint yet."},
+            }
+        },
+    },
+    404: {
+        "description": "The requested model was not found locally.",
+        "content": {
+            "application/json": {
+                "schema": _ERROR_RESPONSE_SCHEMA,
+                "example": {"detail": "Model not found: 'mlx-community__Llama-3.2-3B-Instruct-4bit'"},
+            }
+        },
+    },
+    500: {
+        "description": "The model failed to load or inference failed.",
+        "content": {
+            "application/json": {
+                "schema": _ERROR_RESPONSE_SCHEMA,
+                "example": {"detail": "Inference error: <backend message>"},
+            }
+        },
+    },
 }
 
 
@@ -238,6 +428,30 @@ def _stream_with_stop_sequences(chunks_with_usage, stop_sequences: list[str]):
         yield pending, None
 
 
+def _collect_chat_completion(active_service, body, stop_sequences: list[str]) -> tuple[str, dict]:
+    """
+    Buffer a chat completion by draining the streaming path.
+
+    Used whenever we need per-token handling for a non-streaming response —
+    i.e. when `verbose` metrics or `stop` sequences are requested — so stop
+    trimming and usage accounting stay identical to the streaming path.
+    """
+    chunks: list[str] = []
+    usage: dict = {}
+    stream_iter = active_service.chat_stream(
+        messages=body.messages,
+        max_tokens=body.max_tokens,
+        temperature=body.temperature,
+        top_p=body.top_p,
+        repetition_penalty=body.repetition_penalty,
+    )
+    for chunk, stream_usage in _stream_with_stop_sequences(stream_iter, stop_sequences):
+        chunks.append(chunk)
+        if stream_usage is not None:
+            usage = stream_usage
+    return "".join(chunks), usage
+
+
 def _sse_chunk(payload: dict) -> str:
     """Format one Server-Sent Events frame for OpenAI-style streaming."""
     return f"data: {json.dumps(payload)}\n\n"
@@ -259,13 +473,27 @@ def _build_verbose_metrics(usage: dict | None, load_duration_s: float | None) ->
     )
 
 
-@router.post("/chat/completions", response_model=OpenAIChatCompletionResponse)
+@router.post(
+    "/chat/completions",
+    response_model=OpenAIChatCompletionResponse,
+    summary="Create a chat completion",
+    responses=_CHAT_COMPLETION_RESPONSES,
+)
 async def create_chat_completion(
     request: Request,
-    body: OpenAIChatCompletionRequest,
+    body: OpenAIChatCompletionRequest = Body(..., openapi_examples=_CHAT_COMPLETION_EXAMPLES),
 ):
     """
     OpenAI-compatible chat completions endpoint.
+
+    Supports text, multimodal (image / audio), streaming (SSE), `verbose`
+    timing metrics, and OpenAI-style `stop` sequences. Image- or audio-bearing
+    requests are routed through mlx-vlm automatically; everything else uses
+    mlx-lm. The requested `model` is auto-loaded (swapping out any other loaded
+    model) before generation.
+
+    Use the **Examples** dropdown above to try each scenario — they mirror the
+    Postman collection, including the negative cases that return HTTP 400.
 
     Notes:
     - Usage fields are estimated until tokenizer-based accounting is added.
@@ -343,45 +571,18 @@ async def create_chat_completion(
         return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
     try:
-        if body.verbose:
-            chunks: list[str] = []
-            usage: dict = {}
-            stream_iter = active_service.chat_stream(
+        # `verbose` and `stop` both need per-token handling, so we drain the
+        # streaming path; otherwise the buffered chat() call is the fast path.
+        if body.verbose or stop_sequences:
+            text, usage = _collect_chat_completion(active_service, body, stop_sequences)
+        else:
+            text, usage = active_service.chat(
                 messages=body.messages,
                 max_tokens=body.max_tokens,
                 temperature=body.temperature,
                 top_p=body.top_p,
                 repetition_penalty=body.repetition_penalty,
             )
-            for chunk, stream_usage in _stream_with_stop_sequences(stream_iter, stop_sequences):
-                chunks.append(chunk)
-                if stream_usage is not None:
-                    usage = stream_usage
-            text = "".join(chunks)
-        else:
-            if stop_sequences:
-                chunks: list[str] = []
-                usage = {}
-                stream_iter = active_service.chat_stream(
-                    messages=body.messages,
-                    max_tokens=body.max_tokens,
-                    temperature=body.temperature,
-                    top_p=body.top_p,
-                    repetition_penalty=body.repetition_penalty,
-                )
-                for chunk, stream_usage in _stream_with_stop_sequences(stream_iter, stop_sequences):
-                    chunks.append(chunk)
-                    if stream_usage is not None:
-                        usage = stream_usage
-                text = "".join(chunks)
-            else:
-                text, usage = active_service.chat(
-                    messages=body.messages,
-                    max_tokens=body.max_tokens,
-                    temperature=body.temperature,
-                    top_p=body.top_p,
-                    repetition_penalty=body.repetition_penalty,
-                )
     except InferenceError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

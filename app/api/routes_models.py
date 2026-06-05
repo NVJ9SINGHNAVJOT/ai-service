@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from app.core.exceptions import (
     InvalidModelPathError,
@@ -29,6 +29,43 @@ from app.services.model_manager import ModelManager
 
 router = APIRouter(prefix="/api/v1/models", tags=["models"])
 _manager = ModelManager()
+
+# Reusable error envelope for OpenAPI response documentation.
+_ERROR_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"detail": {"type": "string", "description": "Human-readable error message."}},
+}
+
+_LOAD_MODEL_EXAMPLES = {
+    "text_model": {
+        "summary": "Load a text model",
+        "description": "Loads a text model into the shared inference memory, swapping out any other loaded model.",
+        "value": {"name": "mlx-community__Llama-3.2-3B-Instruct-4bit"},
+    },
+    "media_model": {
+        "summary": "Load a multimodal model",
+        "description": "Loads a vision/audio model used by image and audio chat completions.",
+        "value": {"name": "mlx-community__gemma-4-e4b-bf16"},
+    },
+}
+
+_UNLOAD_MODEL_EXAMPLES = {
+    "unload_current": {
+        "summary": "Unload whatever is loaded",
+        "description": "Omit `name` to unload whichever model is currently resident.",
+        "value": {},
+    },
+    "unload_named": {
+        "summary": "Unload a specific model (guardrail)",
+        "description": "Pass `name` to assert which model you expect to unload; a mismatch returns HTTP 400.",
+        "value": {"name": "mlx-community__Llama-3.2-3B-Instruct-4bit"},
+    },
+    "unload_mismatch_400": {
+        "summary": "Negative — name mismatch (400)",
+        "description": "Requesting a name other than the currently loaded model returns HTTP 400.",
+        "value": {"name": "some-other-model"},
+    },
+}
 
 
 def _load_model_into_memory(name: str) -> None:
@@ -66,8 +103,28 @@ async def list_models() -> APIResponse:
 
 # ── Load ─────────────────────────────────────────────────────────────────────
 
-@router.post("/load", response_model=APIResponse, summary="Load a model into memory")
-async def load_model(body: LoadModelRequest) -> APIResponse:
+@router.post(
+    "/load",
+    response_model=APIResponse,
+    summary="Load a model into memory",
+    responses={
+        400: {
+            "description": "The model files are incomplete or the architecture is unsupported.",
+            "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
+        },
+        404: {
+            "description": "No local model with that name was found.",
+            "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
+        },
+        500: {
+            "description": "The model failed to load into memory.",
+            "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
+        },
+    },
+)
+async def load_model(
+    body: LoadModelRequest = Body(..., openapi_examples=_LOAD_MODEL_EXAMPLES),
+) -> APIResponse:
     """
     Load the named model into memory for inference.
 
@@ -92,8 +149,25 @@ async def load_model(body: LoadModelRequest) -> APIResponse:
 
 # ── Unload ───────────────────────────────────────────────────────────────────
 
-@router.post("/unload", response_model=APIResponse, summary="Unload the current model from memory")
-async def unload_model(body: UnloadModelRequest) -> APIResponse:
+@router.post(
+    "/unload",
+    response_model=APIResponse,
+    summary="Unload the current model from memory",
+    responses={
+        400: {
+            "description": "The provided `name` does not match the currently loaded model.",
+            "content": {
+                "application/json": {
+                    "schema": _ERROR_RESPONSE_SCHEMA,
+                    "example": {"detail": "Model 'some-other-model' is not currently loaded ('mlx-community__Llama-3.2-3B-Instruct-4bit' is)."},
+                }
+            },
+        },
+    },
+)
+async def unload_model(
+    body: UnloadModelRequest = Body(..., openapi_examples=_UNLOAD_MODEL_EXAMPLES),
+) -> APIResponse:
     """
     Unload the currently loaded model and free memory.
 

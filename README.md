@@ -71,34 +71,40 @@ The project uses `mlx-lm`, which is built for Apple's MLX stack and is intended 
 
 ```text
 app/
-├── api/
-│   ├── routes_health.py
-│   ├── routes_models.py
-│   └── routes_openai.py
+├── api/                          # FastAPI routers (thin HTTP layer)
+│   ├── routes_health.py          #   GET  /health
+│   ├── routes_models.py          #   GET/POST /api/v1/models[...]
+│   └── routes_openai.py          #   POST /v1/chat/completions
 ├── cli/
-│   └── main.py
+│   └── main.py                   # Typer CLI: models / chat / chat-media / serve
 ├── core/
-│   ├── exceptions.py
-│   └── logging.py
+│   ├── exceptions.py             # Domain exception hierarchy
+│   └── logging.py                # Logging setup
 ├── schemas/
-│   ├── inference.py
-│   └── model.py
-├── services/
-│   ├── chat_session.py
-│   ├── inference_service.py
-│   └── model_manager.py
-├── config.py
-└── main.py
+│   ├── inference.py              # Chat + OpenAI request/response models
+│   └── model.py                  # Model-management payloads
+├── services/                     # Business logic
+│   ├── base_inference_service.py #   LoadedModelService ABC (shared lifecycle)
+│   ├── inference_service.py      #   Text inference (mlx-lm)
+│   ├── media_inference_service.py#   Multimodal inference (mlx-vlm)
+│   ├── chat_session.py           #   Interactive terminal text chat
+│   ├── media_chat_session.py     #   Interactive terminal image/audio chat
+│   ├── model_manager.py          #   Download / list / update / delete / registry
+│   └── model_runtime_state.py    #   Cross-process "downloading"/"running" markers
+├── config.py                     # Settings (env / .env) and resolved paths
+└── main.py                       # App factory, CORS, routers, shared singletons
 
 models/
-├── downloaded/
-├── custom/
-└── registry.json
+├── downloaded/                   # Models fetched from Hugging Face
+├── custom/                       # Manually placed model folders
+├── runtime/                      # Transient activity marker files
+└── registry.json                # Metadata for downloaded models
 
 tests/
 ├── conftest.py
 ├── test_cli_chat.py
 ├── test_media_chat.py
+├── test_logging.py
 ├── test_models.py
 └── test_openai_api.py
 ```
@@ -133,8 +139,12 @@ These define the shapes of:
 This is where the main business logic lives.
 
 - `model_manager.py` handles downloading, registry updates, listing, updating, and deleting models
-- `inference_service.py` loads a model and performs generate/chat calls
-- `chat_session.py` runs the interactive terminal chat loop
+- `base_inference_service.py` defines `LoadedModelService`, the abstract base that owns the shared model lifecycle (lock, loaded-model state, load timing, runtime marker, and generation kwargs). Both inference services extend it so the OpenAI route can treat either backend through one interface
+- `inference_service.py` loads a text model with `mlx-lm` and performs generate/chat calls
+- `media_inference_service.py` loads a multimodal model with `mlx-vlm` for image/audio chat completions
+- `chat_session.py` runs the interactive terminal text chat loop
+- `media_chat_session.py` runs the interactive terminal image/audio chat loop
+- `model_runtime_state.py` persists tiny marker files so `downloading` / `running` states are visible across processes
 
 ### `app/api/*`
 
@@ -150,7 +160,9 @@ Typer-based command-line interface for people who want to manage models or chat 
 
 ### `app/main.py`
 
-Creates the FastAPI app, configures CORS, registers routes, and creates the shared `inference_service` singleton.
+Creates the FastAPI app, configures CORS, registers routes, and creates the shared
+`inference_service` (text / mlx-lm) and `media_inference_service` (multimodal / mlx-vlm)
+singletons that the routes reuse across requests.
 
 ## How Model Storage Works
 
@@ -847,6 +859,13 @@ When the server is running, FastAPI also exposes built-in docs:
 - `http://127.0.0.1:8000/docs`
 - `http://127.0.0.1:8000/redoc`
 - `http://127.0.0.1:8000/openapi.json`
+
+Every endpoint in Swagger UI (`/docs`) ships interactive **Examples** that mirror the
+Postman collection in [postman/ai-service.postman_collection.json](/Users/navjot/Desktop/GitRepos/ai-service/postman/ai-service.postman_collection.json) —
+including text, image, audio, streaming, verbose, and `stop` scenarios, plus the negative
+cases that return `400`. Pick one from the *Examples* dropdown and press **Try it out**.
+Replace placeholder model names, image paths, and audio data with values that exist on
+your machine before sending.
 
 ## How Inference Works Internally
 
