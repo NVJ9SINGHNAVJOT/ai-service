@@ -48,7 +48,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             manager = ModelManager(cfg=settings)
             info = manager.get_model(settings.default_model)
-            inference_service.load(Path(info.path), info.name)
+            is_vlm = info.backend == "mlx-vlm"
+            if is_vlm:
+                media_inference_service.load(Path(info.path), info.name)
+            else:
+                inference_service.load(Path(info.path), info.name)
             logger.info("Default model '%s' pre-loaded.", settings.default_model)
         except (ModelNotFoundError, ModelLoadError) as exc:
             logger.warning("Could not pre-load default model: %s", exc)

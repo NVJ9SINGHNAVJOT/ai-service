@@ -364,6 +364,15 @@ def _request_uses_vlm(messages) -> bool:
     return any(message.has_image() or message.has_audio() for message in messages)
 
 
+def _model_is_vlm(model_name: str) -> bool:
+    """Return True when the model was converted with mlx-vlm (backend field)."""
+    try:
+        info = _manager.get_model(model_name)
+        return info.backend == "mlx-vlm"
+    except Exception:
+        return False
+
+
 def _messages_to_prompt_text(messages) -> str:
     """Flatten only the textual portions of chat messages for fallback usage estimates."""
     return "\n".join(message.text_content() for message in messages)
@@ -501,7 +510,7 @@ async def create_chat_completion(
     _reject_unsupported_chat_features(body)
     stop_sequences = _normalize_stop_sequences(body.stop)
 
-    uses_vlm = _request_uses_vlm(body.messages)
+    uses_vlm = _request_uses_vlm(body.messages) or _model_is_vlm(body.model)
     if uses_vlm:
         _ensure_media_model_loaded(body.model)
         from app.main import media_inference_service as active_service

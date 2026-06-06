@@ -70,19 +70,31 @@ _UNLOAD_MODEL_EXAMPLES = {
 
 def _load_model_into_memory(name: str) -> None:
     """
-    Resolve a model by name and load it into the shared inference service.
+    Resolve a model by name and load it into the correct inference service.
 
-    Keeping this in a small helper makes the route itself easier to read and
-    avoids repeating the "look up path, convert to Path, then load" sequence.
+    VLM models (image / audio / video support) are loaded into
+    media_inference_service (mlx-vlm); text-only models into inference_service
+    (mlx-lm).
     """
     from app.main import inference_service, media_inference_service
 
-    info = _manager.ensure_model_loadable(name)
-    media_inference_service.unload()
-    inference_service.load(
-        model_path=Path(info.path),
-        model_name=info.name,
-    )
+    raw_info = _manager.get_model(name)
+    is_vlm = raw_info.backend == "mlx-vlm"
+
+    if is_vlm:
+        info = _manager.ensure_model_files_ready(name)
+        inference_service.unload()
+        media_inference_service.load(
+            model_path=Path(info.path),
+            model_name=info.name,
+        )
+    else:
+        info = _manager.ensure_model_loadable(name)
+        media_inference_service.unload()
+        inference_service.load(
+            model_path=Path(info.path),
+            model_name=info.name,
+        )
 
 
 # ── List ─────────────────────────────────────────────────────────────────────

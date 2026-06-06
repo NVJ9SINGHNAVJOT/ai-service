@@ -169,6 +169,16 @@ def _detect_input_modalities(path: Path) -> List[str]:
     if any(key in config for key in audio_keys) or any(hint in model_type for hint in audio_hints):
         modalities.append("audio")
 
+    video_keys = {
+        "video_token_index",
+        "num_video_tokens",
+        "video_encoder",
+        "video_config",
+    }
+    video_hints = ("video", "vid2seq", "videollm")
+    if any(key in config for key in video_keys) or any(hint in model_type for hint in video_hints):
+        modalities.append("video")
+
     return modalities
 
 
@@ -222,6 +232,76 @@ def _mlx_model_remapping() -> Dict[str, str]:
                             for key, mapped in value.items()
                         }
     return {}
+
+
+@lru_cache(maxsize=1)
+def _supported_mlx_vlm_model_types() -> Optional[Set[str]]:
+    """Return model type names supported by the installed mlx_vlm package.
+
+    Includes both directory names under mlx_vlm/models/ and all keys in
+    mlx_vlm's MODEL_REMAPPING (which are aliases that also route through vlm).
+    Returns None when mlx_vlm is not installed.
+    """
+    spec = importlib.util.find_spec("mlx_vlm")
+    if spec is None or not spec.submodule_search_locations:
+        return None
+
+    root = Path(next(iter(spec.submodule_search_locations)))
+    models_dir = root / "models"
+    if not models_dir.exists():
+        return None
+
+    types: Set[str] = set()
+
+    # Architecture directories
+    for path in models_dir.iterdir():
+        if path.is_dir() and not path.name.startswith("_"):
+            types.add(path.name)
+        elif path.suffix == ".py" and path.stem != "__init__":
+            types.add(path.stem)
+
+    # MODEL_REMAPPING aliases
+    utils_path = root / "utils.py"
+    if utils_path.exists():
+        try:
+            tree = ast.parse(utils_path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            tree = None
+        if tree:
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == "MODEL_REMAPPING":
+                            try:
+                                value = ast.literal_eval(node.value)
+                            except (ValueError, SyntaxError):
+                                break
+                            if isinstance(value, dict):
+                                types.update(str(k) for k in value)
+
+    return types or None
+
+
+def _detect_backend(path: Path) -> str:
+    """Determine the correct inference backend for a model.
+
+    Uses the model_type from config.json as a proxy for which tool converted
+    the model: if model_type appears in mlx_vlm's registry → 'mlx-vlm',
+    otherwise → 'mlx-lm'.
+
+    Falls back to modality-based detection when mlx_vlm is not installed.
+    """
+    model_type = (_read_model_type(path) or "").lower()
+    vlm_types = _supported_mlx_vlm_model_types()
+
+    if vlm_types is None:
+        modalities = _detect_input_modalities(path)
+        return "mlx-vlm" if any(m in modalities for m in ("image", "audio", "video")) else "mlx-lm"
+
+    if model_type and model_type in vlm_types:
+        return "mlx-vlm"
+
+    return "mlx-lm"
 
 
 def _is_model_type_supported(path: Path) -> bool:
@@ -353,6 +433,7 @@ class ModelManager:
         model_type_supported = _is_model_type_supported(path)
         state = _resolve_model_state(raw_loadable, model_type_supported, runtime_activity)
         input_modalities = _detect_input_modalities(path)
+        backend = _detect_backend(path)
         return ModelInfo(
             name=path.name,
             repo_id=reg.get("repo_id") or (runtime_activity.repo_id if runtime_activity else None),
@@ -361,6 +442,7 @@ class ModelManager:
             path=str(path.resolve()),
             loadable=_resolve_loadable(raw_loadable, model_type_supported, state),
             input_modalities=input_modalities,
+            backend=backend,
             size_mb=_dir_size_mb(path),
             created_at=_parse_dt(reg.get("created_at")),
             updated_at=_parse_dt(reg.get("updated_at")),
@@ -468,6 +550,7 @@ class ModelManager:
         if model_type and not _is_model_type_supported(model_path):
             raise UnsupportedModelError(name, model_type)
 
+        logger.info("Loading '%s' via mlx-lm (model_type: %s, modalities: %s)", name, model_type or "unknown", ", ".join(info.input_modalities))
         return info
 
     def ensure_model_files_ready(self, name: str) -> ModelInfo:
@@ -484,6 +567,8 @@ class ModelManager:
             raise InvalidModelPathError(
                 f"Model '{name}' is missing expected files like config.json or tokenizer_config.json."
             )
+        model_type = _read_model_type(model_path)
+        logger.info("Loading '%s' via mlx-vlm (model_type: %s, modalities: %s)", name, model_type or "unknown", ", ".join(info.input_modalities))
         return info
 
     def _diagnose_model_info(self, info: ModelInfo) -> ModelDiagnosis:

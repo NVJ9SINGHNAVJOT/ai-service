@@ -104,26 +104,27 @@ def models_list() -> None:
     table.add_column("Name", style="cyan", no_wrap=True)
     table.add_column("Source", style="magenta")
     table.add_column("State")
+    table.add_column("Backend", style="blue")
+    table.add_column("Modalities")
     table.add_column("Loadable", justify="center")
     table.add_column("Size (MB)", justify="right")
     table.add_column("HF Repo", style="dim")
-    table.add_column("Created", style="dim")
     table.add_column("Updated", style="dim")
 
     for m in model_list:
         state_style = _style_for_state(m.state.value)
         loadable_icon = "✓" if m.loadable else "✗"
         loadable_style = "green" if m.loadable else "red"
-        created = m.created_at.strftime("%Y-%m-%d") if m.created_at else "—"
         updated = m.updated_at.strftime("%Y-%m-%d") if m.updated_at else "—"
         table.add_row(
             m.name,
             m.source.value,
             f"[{state_style}]{m.state.value}[/{state_style}]",
+            m.backend,
+            _format_input_modalities(m.input_modalities),
             f"[{loadable_style}]{loadable_icon}[/{loadable_style}]",
             str(m.size_mb) if m.size_mb is not None else "—",
             m.repo_id or "—",
-            created,
             updated,
         )
 
@@ -365,28 +366,55 @@ def chat(
     from app.services.chat_session import ChatSession
     from app.core.exceptions import InvalidModelPathError, ModelNotFoundError, UnsupportedModelError
 
+    from app.services.media_chat_session import MediaChatSession
+
     manager = ModelManager()
     try:
-        info = manager.ensure_model_loadable(model)
+        raw_info = manager.get_model(model)
     except ModelNotFoundError:
         _abort(
             f"Model '{model}' not found.\n"
             "  Run `python -m app.cli.main models list` to see available models."
         )
+
+    is_vlm = raw_info.backend == "mlx-vlm"
+
+    try:
+        if is_vlm:
+            info = manager.ensure_model_files_ready(model)
+        else:
+            info = manager.ensure_model_loadable(model)
     except (InvalidModelPathError, UnsupportedModelError) as exc:
         _abort(str(exc))
 
-    session = ChatSession(
-        model_path=Path(info.path),
-        model_name=info.name,
-        system_prompt=system_prompt,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-        verbose=verbose,
-    )
-    session.run()
+    if is_vlm:
+        console.print(f"[dim]'{model}' — backend: mlx-vlm | accepts: {', '.join(info.input_modalities)}[/dim]")
+        session = MediaChatSession(
+            model_path=Path(info.path),
+            model_name=info.name,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            allowed_modalities=info.input_modalities,
+            verbose=verbose,
+        )
+        try:
+            session.run()
+        except Exception as exc:
+            _abort(str(exc))
+    else:
+        console.print(f"[dim]'{model}' — backend: mlx-lm | accepts: {', '.join(info.input_modalities)}[/dim]")
+        session = ChatSession(
+            model_path=Path(info.path),
+            model_name=info.name,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            verbose=verbose,
+        )
+        session.run()
 
 
 @cli.command("chat-media")
