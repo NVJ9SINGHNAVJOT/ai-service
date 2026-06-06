@@ -72,9 +72,9 @@ def _load_model_into_memory(name: str) -> None:
     """
     Resolve a model by name and load it into the correct inference service.
 
-    VLM models (image / audio / video support) are loaded into
-    media_inference_service (mlx-vlm); text-only models into inference_service
-    (mlx-lm).
+    Backend is selected from the model's `backend` field (derived from the
+    conversion tool): mlx-vlm models go to media_inference_service, mlx-lm
+    models go to inference_service.
     """
     from app.main import inference_service, media_inference_service
 

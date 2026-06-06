@@ -81,7 +81,7 @@ return HTTP 400 — pick one from the *Examples* dropdown and hit **Try it out**
 - `POST /v1/chat/completions` — text, image, and audio chat; SSE streaming;
   `verbose` timing metrics; OpenAI-style `stop` sequences.
 - `POST /api/v1/models/load` · `/unload` — swap the in-memory model.
-- `GET /api/v1/models` — list local models with state and input modalities.
+- `GET /api/v1/models` — list local models with state, `backend` (mlx-lm / mlx-vlm), and `input_modalities` (text / image / audio / video).
 
 > Replace placeholder model names, image paths, and audio data in the examples
 > with values that exist on your machine before sending a request.
