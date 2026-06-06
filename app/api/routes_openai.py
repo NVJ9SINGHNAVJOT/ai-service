@@ -129,7 +129,14 @@ _CHAT_COMPLETION_EXAMPLES = {
     },
     "audio": {
         "summary": "Audio + text (multimodal)",
-        "description": "Audio + text chat completion. Routed through mlx-vlm automatically because the message carries audio.",
+        "description": (
+            "Audio + text chat completion. Routed through mlx-vlm automatically because the "
+            "message carries audio. `input_audio.data` must be **base64-encoded audio bytes** "
+            "— exactly what the OpenAI SDK sends, e.g. "
+            "`base64.b64encode(open('clip.wav', 'rb').read()).decode()` — not a file path. "
+            "`format` is the source type such as `wav` or `mp3`. Replace the placeholder below "
+            "with your own base64 string before sending."
+        ),
         "value": {
             "model": "mlx-community__gemma-4-e4b-bf16",
             "messages": [
@@ -137,7 +144,7 @@ _CHAT_COMPLETION_EXAMPLES = {
                     "role": "user",
                     "content": [
                         {"type": "input_text", "text": "Transcribe or summarize this clip."},
-                        {"type": "input_audio", "input_audio": {"data": "base64-audio-data", "format": "wav"}},
+                        {"type": "input_audio", "input_audio": {"data": "<base64-encoded-wav-bytes>", "format": "wav"}},
                     ],
                 }
             ],
