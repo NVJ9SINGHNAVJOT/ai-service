@@ -282,27 +282,43 @@ def _supported_mlx_vlm_model_types() -> Optional[Set[str]]:
 
 
 def _detect_backend(path: Path) -> str:
-    """Determine the correct inference backend for a model.
+    """Determine the correct inference backend based on the model's conversion tool.
 
-    Uses the model_type from config.json as a proxy for which tool converted
-    the model: if model_type appears in mlx_vlm's registry → 'mlx-vlm',
-    otherwise → 'mlx-lm'.
+    Three-way registry check (no direct dependency on modalities):
 
-    Falls back to modality-based detection when mlx_vlm is not installed.
+    1. model_type only in mlx-vlm registry → mlx-vlm  (exclusively a VLM architecture)
+    2. model_type in both registries       → mlx-vlm only if vision_config is a
+                                             non-empty dict (the model was packed as
+                                             a full VLM, not just the text backbone)
+    3. model_type only in mlx-lm or unknown → mlx-lm
+
+    _detect_input_modalities() is kept entirely separate — it describes what inputs
+    the model accepts and is never called here.
     """
     model_type = (_read_model_type(path) or "").lower()
-    modalities = _detect_input_modalities(path)
-    has_media = any(m in modalities for m in ("image", "audio", "video"))
+    if not model_type:
+        return "mlx-lm"
+
     vlm_types = _supported_mlx_vlm_model_types()
+    lm_types = _supported_mlx_model_types()
 
-    if vlm_types is None:
-        # mlx-vlm not installed — fall back to capability check alone
-        return "mlx-vlm" if has_media else "mlx-lm"
+    in_vlm = vlm_types is not None and model_type in vlm_types
+    in_lm = lm_types is not None and (
+        model_type in lm_types or _mlx_model_remapping().get(model_type, model_type) in lm_types
+    )
 
-    # Use mlx-vlm only when the model_type is in the vlm registry AND the model
-    # actually has multimodal capabilities. This avoids false positives where a
-    # text-only model shares an architecture name with a VLM (e.g. translategemma).
-    if model_type and model_type in vlm_types and has_media:
+    if not in_vlm:
+        return "mlx-lm"
+
+    if not in_lm:
+        # Exclusively in mlx-vlm — must use vlm loader
+        return "mlx-vlm"
+
+    # In both registries: the architecture can be text-only (mlx-lm backbone) or
+    # full VLM. Distinguish by checking vision_config in config.json directly —
+    # a non-empty dict means the model was exported as a full VLM.
+    config = _read_model_config(path)
+    if isinstance(config.get("vision_config"), dict) and config["vision_config"]:
         return "mlx-vlm"
 
     return "mlx-lm"
