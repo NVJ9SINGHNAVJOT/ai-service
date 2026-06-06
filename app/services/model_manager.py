@@ -146,16 +146,15 @@ def _detect_input_modalities(path: Path) -> List[str]:
     model_type = str(config.get("model_type") or "").lower()
     modalities = ["text"]
 
+    # vision_config must be a non-empty dict — a null/empty entry means no vision encoder
+    has_vision_config = isinstance(config.get("vision_config"), dict) and bool(config["vision_config"])
     vision_keys = {
-        "vision_config",
         "vision_tower",
         "vision_encoder",
-        "image_token_index",
-        "num_image_tokens",
         "mm_vision_tower",
     }
-    vision_hints = ("vl", "vision", "llava", "paligemma", "mllama", "gemma4", "gemma3", "pixtral", "ocr")
-    if any(key in config for key in vision_keys) or any(hint in model_type for hint in vision_hints):
+    vision_hints = ("vl", "vision", "llava", "paligemma", "mllama", "gemma4", "pixtral", "ocr")
+    if has_vision_config or any(key in config for key in vision_keys) or any(hint in model_type for hint in vision_hints):
         modalities.append("image")
 
     audio_keys = {
@@ -292,13 +291,18 @@ def _detect_backend(path: Path) -> str:
     Falls back to modality-based detection when mlx_vlm is not installed.
     """
     model_type = (_read_model_type(path) or "").lower()
+    modalities = _detect_input_modalities(path)
+    has_media = any(m in modalities for m in ("image", "audio", "video"))
     vlm_types = _supported_mlx_vlm_model_types()
 
     if vlm_types is None:
-        modalities = _detect_input_modalities(path)
-        return "mlx-vlm" if any(m in modalities for m in ("image", "audio", "video")) else "mlx-lm"
+        # mlx-vlm not installed — fall back to capability check alone
+        return "mlx-vlm" if has_media else "mlx-lm"
 
-    if model_type and model_type in vlm_types:
+    # Use mlx-vlm only when the model_type is in the vlm registry AND the model
+    # actually has multimodal capabilities. This avoids false positives where a
+    # text-only model shares an architecture name with a VLM (e.g. translategemma).
+    if model_type and model_type in vlm_types and has_media:
         return "mlx-vlm"
 
     return "mlx-lm"
