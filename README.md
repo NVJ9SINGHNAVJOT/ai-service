@@ -60,7 +60,7 @@ This project is not trying to be a full distributed inference platform. It is in
 ## Requirements
 
 - macOS on Apple Silicon
-- Python 3.11 or newer
+- Python 3.13 or newer
 - [Task](https://taskfile.dev) optional but recommended
 
 Why Apple Silicon matters:
@@ -277,7 +277,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-The project is intended for Python 3.11 or newer.
+The project is intended for Python 3.13 or newer.
 
 ### 2. Install dependencies
 
@@ -593,7 +593,7 @@ automatically.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
-| GET | `/api/v1/models` | List all local models |
+| GET | `/api/v1/models` | List all local models with state, backend, and input modalities |
 | POST | `/api/v1/models/load` | Load a model into memory |
 | POST | `/api/v1/models/unload` | Unload the currently loaded model |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
@@ -610,7 +610,8 @@ Example response:
 {
   "status": "ok",
   "model_loaded": false,
-  "loaded_model": null
+  "loaded_model": null,
+  "loaded_model_backend": null
 }
 ```
 
