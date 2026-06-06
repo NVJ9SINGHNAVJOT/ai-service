@@ -4,7 +4,7 @@ version: "3"
 # Variables — override at call site: task model:download MODEL=org/repo
 # ---------------------------------------------------------------------------
 vars:
-  PYTHON: python3
+  PYTHON: python3.13
   APP_MODULE: app.main:app
   HOST: '{{.API_HOST | default "0.0.0.0"}}'
   PORT: '{{.API_PORT | default "8000"}}'
