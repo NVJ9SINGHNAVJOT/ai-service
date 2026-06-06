@@ -209,6 +209,7 @@ def test_list_models_marks_unsupported_model_as_not_loadable(manager, tmp_models
 
     monkeypatch.setattr("app.services.model_manager._supported_mlx_model_types", lambda: {"gemma", "gemma2", "gemma3"})
     monkeypatch.setattr("app.services.model_manager._mlx_model_remapping", lambda: {})
+    monkeypatch.setattr("app.services.model_manager._supported_mlx_vlm_model_types", lambda: set())
 
     models = manager.list_models()
     model = next(m for m in models if m.name == "mlx-community__UnsupportedGemma4")
@@ -317,6 +318,7 @@ def test_diagnose_model_reports_unsupported_runtime(manager, tmp_models_dir, mon
 
     monkeypatch.setattr("app.services.model_manager._supported_mlx_model_types", lambda: {"gemma", "gemma2", "gemma3"})
     monkeypatch.setattr("app.services.model_manager._mlx_model_remapping", lambda: {})
+    monkeypatch.setattr("app.services.model_manager._supported_mlx_vlm_model_types", lambda: set())
 
     diagnosis = manager.diagnose_model("mlx-community__UnsupportedGemma4")
 
@@ -324,6 +326,45 @@ def test_diagnose_model_reports_unsupported_runtime(manager, tmp_models_dir, mon
     assert diagnosis.supported_by_mlx is False
     assert "does not support" in diagnosis.summary
     assert diagnosis.recommendations
+
+
+def test_diagnose_vlm_only_model_supported_via_mlx_vlm(manager, tmp_models_dir, monkeypatch):
+    """A VLM-only architecture is validated against mlx-vlm, not mlx-lm.
+
+    Loading routes purely on the detected backend, so a model mlx-lm does not know
+    about but mlx-vlm does must still be reported as loadable rather than flagged
+    unsupported with an irrelevant 'upgrade mlx-lm' recommendation.
+    """
+    fake_model = tmp_models_dir / "downloaded" / "mlx-community__VlmOnly"
+    fake_model.mkdir()
+    (fake_model / "config.json").write_text(
+        json.dumps({"model_type": "llava", "vision_config": {"image_size": 336}})
+    )
+    (fake_model / "tokenizer_config.json").write_text("{}")
+
+    registry = {
+        "mlx-community__VlmOnly": {
+            "name": "mlx-community__VlmOnly",
+            "repo_id": "mlx-community/VlmOnly",
+            "path": str(fake_model),
+            "source": "downloaded",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00",
+        }
+    }
+    (tmp_models_dir / "registry.json").write_text(json.dumps(registry))
+
+    monkeypatch.setattr("app.services.model_manager._supported_mlx_model_types", lambda: {"gemma", "llama"})
+    monkeypatch.setattr("app.services.model_manager._mlx_model_remapping", lambda: {})
+    monkeypatch.setattr("app.services.model_manager._supported_mlx_vlm_model_types", lambda: {"llava", "qwen2_vl"})
+
+    diagnosis = manager.diagnose_model("mlx-community__VlmOnly")
+
+    assert diagnosis.backend == "mlx-vlm"
+    assert diagnosis.supported_by_mlx is True
+    assert diagnosis.loadable is True
+    assert diagnosis.state.value == "ready"
+    assert diagnosis.summary == "Model looks ready to load."
 
 
 def test_get_model_not_found(manager):

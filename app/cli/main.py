@@ -157,7 +157,8 @@ def models_doctor(
             table.add_row("Loadable", "[green]✓[/green]" if diagnosis.loadable else "[red]✗[/red]")
             table.add_row("HF Repo", diagnosis.repo_id or "—")
             table.add_row("Model Type", diagnosis.model_type or "—")
-            table.add_row("MLX Backend", diagnosis.effective_model_type or "—")
+            table.add_row("MLX Architecture", diagnosis.effective_model_type or "—")
+            table.add_row("Backend", diagnosis.backend)
             table.add_row("Inputs", _format_input_modalities(diagnosis.input_modalities))
             table.add_row(
                 "Supported By MLX",
@@ -188,6 +189,7 @@ def models_doctor(
     table.add_column("State")
     table.add_column("Loadable", justify="center")
     table.add_column("Model Type")
+    table.add_column("Backend")
     table.add_column("Inputs")
     table.add_column("MLX Support", justify="center")
     table.add_column("Diagnosis")
@@ -199,6 +201,7 @@ def models_doctor(
             f"[{_style_for_state(diagnosis.state.value)}]{diagnosis.state.value}[/{_style_for_state(diagnosis.state.value)}]",
             "[green]✓[/green]" if diagnosis.loadable else "[red]✗[/red]",
             diagnosis.model_type or "—",
+            diagnosis.backend,
             _format_input_modalities(diagnosis.input_modalities),
             support,
             diagnosis.summary,

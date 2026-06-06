@@ -71,6 +71,7 @@ class ModelDiagnosis:
     repo_id: Optional[str]
     model_type: Optional[str]
     effective_model_type: Optional[str]
+    backend: str
     supported_by_mlx: Optional[bool]
     input_modalities: List[str]
     missing_files: List[str]
@@ -343,6 +344,29 @@ def _is_model_type_supported(path: Path) -> bool:
     return effective_type in supported
 
 
+def _is_model_type_supported_for_backend(path: Path, backend: str) -> bool:
+    """
+    Return True when the architecture is supported by the backend that will
+    actually load it.
+
+    Loading routes purely on ``backend`` (see ``_detect_backend``), so a VLM-only
+    architecture must be validated against mlx_vlm, not mlx_lm. Checking it against
+    mlx_lm would flag every multimodal model as unsupported even though the vlm
+    loader handles it fine.
+    """
+    if backend != "mlx-vlm":
+        return _is_model_type_supported(path)
+
+    supported = _supported_mlx_vlm_model_types()
+    if supported is None:
+        return True
+
+    model_type = (_read_model_type(path) or "").lower()
+    if not model_type:
+        return True
+    return model_type in supported
+
+
 def _effective_model_type(model_type: Optional[str]) -> Optional[str]:
     """Return the effective mlx_lm backend name after remapping."""
     if not model_type:
@@ -450,10 +474,10 @@ class ModelManager:
         """
         reg = registry_entry or {}
         raw_loadable = _is_loadable(path)
-        model_type_supported = _is_model_type_supported(path)
+        backend = _detect_backend(path)
+        model_type_supported = _is_model_type_supported_for_backend(path, backend)
         state = _resolve_model_state(raw_loadable, model_type_supported, runtime_activity)
         input_modalities = _detect_input_modalities(path)
-        backend = _detect_backend(path)
         return ModelInfo(
             name=path.name,
             repo_id=reg.get("repo_id") or (runtime_activity.repo_id if runtime_activity else None),
@@ -594,9 +618,12 @@ class ModelManager:
     def _diagnose_model_info(self, info: ModelInfo) -> ModelDiagnosis:
         """Compute a CLI-friendly diagnosis for a model."""
         model_path = Path(info.path)
+        backend = info.backend
         model_type = _read_model_type(model_path)
         effective_model_type = _effective_model_type(model_type)
-        supported_by_mlx = None if not model_type else _is_model_type_supported(model_path)
+        supported_by_mlx = (
+            None if not model_type else _is_model_type_supported_for_backend(model_path, backend)
+        )
         input_modalities = _detect_input_modalities(model_path)
         missing_files = [
             filename for filename in sorted(_MODEL_INDICATOR_FILES) if not (model_path / filename).exists()
@@ -613,8 +640,9 @@ class ModelManager:
             summary = "Model directory is incomplete."
             recommendations.append("Re-download the model or restore the missing files.")
         elif model_type and supported_by_mlx is False:
-            summary = f"Installed mlx_lm does not support model_type '{model_type}'."
-            recommendations.append("Upgrade `mlx` and `mlx-lm`, or choose a model with a supported model_type.")
+            package = "mlx-vlm" if backend == "mlx-vlm" else "mlx-lm"
+            summary = f"Installed {package} does not support model_type '{model_type}'."
+            recommendations.append(f"Upgrade `mlx` and `{package}`, or choose a model with a supported model_type.")
         elif info.loadable:
             summary = "Model looks ready to load."
             recommendations.append("If loading still fails, run the raw `mlx_lm.generate` command to isolate runtime issues.")
@@ -631,6 +659,7 @@ class ModelManager:
             repo_id=info.repo_id,
             model_type=model_type,
             effective_model_type=effective_model_type,
+            backend=backend,
             supported_by_mlx=supported_by_mlx,
             input_modalities=input_modalities,
             missing_files=missing_files,
