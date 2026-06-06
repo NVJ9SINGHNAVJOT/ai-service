@@ -8,9 +8,14 @@ includes image or audio content.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import importlib
 import importlib.util
+import os
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, List, Optional, Tuple
 
@@ -21,6 +26,53 @@ from app.schemas.inference import ChatMessage, Role
 from app.services.base_inference_service import LoadedModelService, openai_role_for_template
 
 logger = get_logger(__name__)
+
+
+def _strip_audio_data_uri(data: str) -> str:
+    """Accept a bare base64 string or a ``data:audio/...;base64,<payload>`` URI."""
+    if data.startswith("data:") and ";base64," in data:
+        return data.split(";base64,", 1)[1]
+    return data
+
+
+def _write_audio_temp(payload: dict[str, Any]) -> str:
+    """Decode one OpenAI ``input_audio`` payload to a temp file and return its path."""
+    fmt = str(payload.get("format") or "wav").lower().lstrip(".")
+    suffix = "." + (fmt if fmt.isalnum() else "wav")
+    cleaned = "".join(_strip_audio_data_uri(str(payload.get("data") or "")).split())
+    try:
+        raw = base64.b64decode(cleaned, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise InferenceError(
+            "input_audio.data must be base64-encoded audio bytes (as the OpenAI SDK sends)."
+        ) from exc
+    if not raw:
+        raise InferenceError("input_audio.data was empty after base64 decoding.")
+
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix="ai_audio_")
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(raw)
+    return path
+
+
+@contextmanager
+def _decode_audio_to_files(payloads: List[dict[str, Any]]) -> Generator[List[str], None, None]:
+    """Materialize base64 ``input_audio`` payloads as temp files for mlx-vlm.
+
+    mlx-vlm reads audio from a file path/URL, not raw base64, so we decode each
+    payload to a short-lived temp file and clean them all up once generation ends.
+    """
+    temp_paths: list[str] = []
+    try:
+        for payload in payloads:
+            temp_paths.append(_write_audio_temp(payload))
+        yield temp_paths
+    finally:
+        for path in temp_paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 class MediaInferenceService(LoadedModelService):
@@ -122,58 +174,59 @@ class MediaInferenceService(LoadedModelService):
             self._require_loaded()
 
             processed_messages = self._prepare_messages(messages)
-            images, audios = self._extract_media(messages)
-            prompt = self._apply_chat_template(
-                self._processor,
-                self._model.config,
-                processed_messages,
-                num_images=len(images),
-                num_audios=len(audios),
-            )
+            images, audio_payloads = self._extract_media(messages)
+            with _decode_audio_to_files(audio_payloads) as audios:
+                prompt = self._apply_chat_template(
+                    self._processor,
+                    self._model.config,
+                    processed_messages,
+                    num_images=len(images),
+                    num_audios=len(audios),
+                )
 
-            try:
-                started_at = time.perf_counter()
-                first_token_at: Optional[float] = None
+                try:
+                    started_at = time.perf_counter()
+                    first_token_at: Optional[float] = None
 
-                for response in self._stream_generate(
-                    model=self._model,
-                    processor=self._processor,
-                    prompt=prompt,
-                    image=images or None,
-                    audio=audios or None,
-                    **self._generation_kwargs(
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        repetition_penalty=repetition_penalty,
-                    ),
-                ):
-                    text = getattr(response, "text", "") or ""
-                    usage = None
-                    if first_token_at is None and text:
-                        first_token_at = time.perf_counter()
-                    if getattr(response, "finish_reason", None) is not None:
-                        finished_at = time.perf_counter()
-                        prompt_tokens = int(getattr(response, "prompt_tokens", 0) or 0)
-                        completion_tokens = int(getattr(response, "generation_tokens", 0) or 0)
-                        prompt_eval_duration = max((first_token_at or finished_at) - started_at, 0.0)
-                        eval_duration = max(finished_at - (first_token_at or finished_at), 0.0)
-                        usage = {
-                            "prompt_tokens": prompt_tokens,
-                            "completion_tokens": completion_tokens,
-                            "total_tokens": prompt_tokens + completion_tokens,
-                            "finish_reason": getattr(response, "finish_reason", "stop"),
-                            "metrics": {
-                                "total_duration_s": finished_at - started_at,
-                                "prompt_eval_duration_s": prompt_eval_duration,
-                                "prompt_eval_rate": (prompt_tokens / prompt_eval_duration) if prompt_eval_duration > 0 else None,
-                                "eval_duration_s": eval_duration,
-                                "eval_rate": (completion_tokens / eval_duration) if eval_duration > 0 else None,
-                            },
-                        }
-                    yield text, usage
-            except Exception as exc:
-                raise InferenceError(str(exc)) from exc
+                    for response in self._stream_generate(
+                        model=self._model,
+                        processor=self._processor,
+                        prompt=prompt,
+                        image=images or None,
+                        audio=audios or None,
+                        **self._generation_kwargs(
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                            repetition_penalty=repetition_penalty,
+                        ),
+                    ):
+                        text = getattr(response, "text", "") or ""
+                        usage = None
+                        if first_token_at is None and text:
+                            first_token_at = time.perf_counter()
+                        if getattr(response, "finish_reason", None) is not None:
+                            finished_at = time.perf_counter()
+                            prompt_tokens = int(getattr(response, "prompt_tokens", 0) or 0)
+                            completion_tokens = int(getattr(response, "generation_tokens", 0) or 0)
+                            prompt_eval_duration = max((first_token_at or finished_at) - started_at, 0.0)
+                            eval_duration = max(finished_at - (first_token_at or finished_at), 0.0)
+                            usage = {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": prompt_tokens + completion_tokens,
+                                "finish_reason": getattr(response, "finish_reason", "stop"),
+                                "metrics": {
+                                    "total_duration_s": finished_at - started_at,
+                                    "prompt_eval_duration_s": prompt_eval_duration,
+                                    "prompt_eval_rate": (prompt_tokens / prompt_eval_duration) if prompt_eval_duration > 0 else None,
+                                    "eval_duration_s": eval_duration,
+                                    "eval_rate": (completion_tokens / eval_duration) if eval_duration > 0 else None,
+                                },
+                            }
+                        yield text, usage
+                except Exception as exc:
+                    raise InferenceError(str(exc)) from exc
 
     @staticmethod
     def _prepare_messages(messages: List[ChatMessage]) -> List[dict]:

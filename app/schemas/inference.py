@@ -69,12 +69,16 @@ class ChatMessage(BaseModel):
 
         return images
 
-    def audio_inputs(self) -> List[str]:
-        """Extract audio payloads from OpenAI-style multimodal content parts."""
+    def audio_inputs(self) -> List[dict[str, Any]]:
+        """Extract OpenAI-style ``input_audio`` payloads.
+
+        Each payload is ``{"data": <base64-encoded audio>, "format": "wav"|...}``,
+        matching what the OpenAI SDK sends. Decoding happens in the media service.
+        """
         if not isinstance(self.content, list):
             return []
 
-        audios: list[str] = []
+        audios: list[dict[str, Any]] = []
         for item in self.content:
             if not isinstance(item, dict):
                 continue
@@ -84,12 +88,8 @@ class ChatMessage(BaseModel):
                 continue
 
             payload = item.get("input_audio")
-            if isinstance(payload, dict):
-                data = payload.get("data")
-            else:
-                data = None
-            if data:
-                audios.append(str(data))
+            if isinstance(payload, dict) and payload.get("data"):
+                audios.append(payload)
 
         return audios
 

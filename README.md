@@ -679,6 +679,11 @@ The API currently supports:
 - `{"type": "input_image", "image_url": "..."}`
 - `{"type": "input_audio", "input_audio": {"data": "...", "format": "wav"}}`
 
+For `input_audio`, `data` must be **base64-encoded audio bytes** (exactly what the
+OpenAI SDK sends), not a file path. `format` is the source type such as `wav` or
+`mp3`. The server decodes the base64 to a temporary file before handing it to
+`mlx-vlm`.
+
 Example image request:
 
 ```json

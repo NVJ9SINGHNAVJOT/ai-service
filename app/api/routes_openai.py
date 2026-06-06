@@ -39,8 +39,9 @@ _IGNORED_CHAT_FIELDS = {
 
 # Request scenarios surfaced in Swagger UI. These mirror the Postman collection
 # (postman/ai-service.postman_collection.json) so the interactive docs and the
-# Postman runner stay in lock-step. Replace the placeholder model names, image
-# path, and audio data with values that exist on your machine before sending.
+# Postman runner stay in lock-step. Replace the placeholder model names and image
+# path with values that exist on your machine, and the audio data with real
+# base64-encoded audio bytes, before sending.
 _CHAT_COMPLETION_EXAMPLES = {
     "text": {
         "summary": "Text — basic completion",
