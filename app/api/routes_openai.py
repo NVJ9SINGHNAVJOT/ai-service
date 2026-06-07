@@ -15,6 +15,8 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app.utils.response import send_response
+
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
 from app.schemas.inference import (
     OpenAIChatCompletionChoice,
@@ -202,6 +204,58 @@ _ERROR_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {"detail": {"type": "string", "description": "Human-readable error message."}},
 }
+# Response examples for the 200 case. Injected into the OpenAPI schema via a
+# custom app.openapi() in app/main.py rather than the `responses=` parameter,
+# because FastAPI serialises the whole schema with exclude_none=True and would
+# otherwise strip the `x_metrics: null` key from the non-verbose example.
+CHAT_COMPLETION_200_EXAMPLES = {
+    "text": {
+        "summary": "Without verbose — x_metrics is null",
+        "value": {
+            "id": "chatcmpl-abc123",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hello! How can I help you today?"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 9, "total_tokens": 19},
+            "x_metrics": None,
+        },
+    },
+    "verbose": {
+        "summary": "With verbose=true — x_metrics populated",
+        "value": {
+            "id": "chatcmpl-abc456",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Bits cascade down,\nFunctions bloom like cherry trees,\nBug fixed at midnight."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 8, "completion_tokens": 18, "total_tokens": 26},
+            "x_metrics": {
+                "total_duration_s": 3.21,
+                "load_duration_s": 0.45,
+                "prompt_eval_count": 8,
+                "prompt_eval_duration_s": 0.12,
+                "prompt_eval_rate": 66.7,
+                "eval_count": 18,
+                "eval_duration_s": 2.64,
+                "eval_rate": 6.8,
+            },
+        },
+    },
+}
+
 _CHAT_COMPLETION_RESPONSES = {
     400: {
         "description": (
@@ -585,6 +639,7 @@ async def create_chat_completion(
                 yield _sse_chunk(error_payload)
                 yield "data: [DONE]\n\n"
 
+        send_response(request, "<streaming SSE>")
         return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
     try:
@@ -613,7 +668,7 @@ async def create_chat_completion(
         prompt_text = _messages_to_prompt_text(body.messages)
         response_usage = _estimate_usage(prompt_text=prompt_text, completion_text=text)
 
-    return OpenAIChatCompletionResponse(
+    return send_response(request, OpenAIChatCompletionResponse(
         id=completion_id,
         object="chat.completion",
         created=created,
@@ -627,4 +682,4 @@ async def create_chat_completion(
         ],
         usage=response_usage,
         x_metrics=_build_verbose_metrics(usage, load_duration_s) if body.verbose else None,
-    )
+    ))

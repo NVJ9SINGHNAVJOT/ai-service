@@ -11,7 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from app.utils.response import send_response
 
 from app.core.exceptions import (
     InvalidModelPathError,
@@ -100,15 +103,15 @@ def _load_model_into_memory(name: str) -> None:
 # ── List ─────────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=APIResponse, summary="List all local models")
-async def list_models() -> APIResponse:
+async def list_models(request: Request) -> JSONResponse:
     """Return all models found in downloaded/ and custom/ directories."""
     try:
         models: List[ModelInfo] = _manager.list_models()
-        return APIResponse(
+        return send_response(request, APIResponse(
             success=True,
             message=f"Found {len(models)} model(s).",
             data=[m.model_dump() for m in models],
-        )
+        ))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -135,8 +138,9 @@ async def list_models() -> APIResponse:
     },
 )
 async def load_model(
+    request: Request,
     body: LoadModelRequest = Body(..., openapi_examples=_LOAD_MODEL_EXAMPLES),
-) -> APIResponse:
+) -> JSONResponse:
     """
     Load the named model into memory for inference.
 
@@ -144,11 +148,11 @@ async def load_model(
     """
     try:
         _load_model_into_memory(body.name)
-        return APIResponse(
+        return send_response(request, APIResponse(
             success=True,
             message=f"Model '{body.name}' is now loaded.",
             data={"loaded_model": body.name},
-        )
+        ))
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except (InvalidModelPathError, UnsupportedModelError) as exc:
@@ -178,8 +182,9 @@ async def load_model(
     },
 )
 async def unload_model(
+    request: Request,
     body: UnloadModelRequest = Body(..., openapi_examples=_UNLOAD_MODEL_EXAMPLES),
-) -> APIResponse:
+) -> JSONResponse:
     """
     Unload the currently loaded model and free memory.
 
@@ -198,13 +203,13 @@ async def unload_model(
 
     unloaded = inference_service.unload() or media_inference_service.unload()
     if unloaded:
-        return APIResponse(
+        return send_response(request, APIResponse(
             success=True,
             message=f"Model '{unloaded}' unloaded.",
             data={"unloaded_model": unloaded},
-        )
-    return APIResponse(
+        ))
+    return send_response(request, APIResponse(
         success=True,
         message="No model was loaded.",
         data=None,
-    )
+    ))

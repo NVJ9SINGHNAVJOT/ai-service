@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from app.utils.response import send_response
 
 router = APIRouter(tags=["health"])
 
@@ -24,7 +27,7 @@ class HealthResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse, summary="Health check")
-async def health() -> HealthResponse:
+async def health(request: Request) -> JSONResponse:
     """Return server health and currently loaded model info."""
     from app.main import inference_service, media_inference_service  # imported here to avoid circular imports
 
@@ -36,9 +39,9 @@ async def health() -> HealthResponse:
         None
     )
 
-    return HealthResponse(
+    return send_response(request, HealthResponse(
         status="ok",
         model_loaded=model_loaded,
         loaded_model=loaded_model,
         loaded_model_backend=backend,
-    )
+    ))

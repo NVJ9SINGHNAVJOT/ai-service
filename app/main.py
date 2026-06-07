@@ -116,6 +116,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    from app.middleware.logging_middleware import LoggingMiddleware
+    app.add_middleware(LoggingMiddleware)
+
     # Domain exception → HTTP error
     @app.exception_handler(MLXManagerError)
     async def mlx_exception_handler(request, exc: MLXManagerError) -> JSONResponse:
@@ -133,7 +136,47 @@ def create_app() -> FastAPI:
     app.include_router(models_router)
     app.include_router(openai_router)
 
+    _install_custom_openapi(app)
+
     return app
+
+
+def _install_custom_openapi(app: FastAPI) -> None:
+    """
+    Override app.openapi() to inject the chat-completion 200 examples.
+
+    FastAPI serialises the schema with exclude_none=True, which strips the
+    `x_metrics: null` key from the non-verbose example. We patch the examples
+    in after generation so the `null` survives.
+    """
+    from fastapi.openapi.utils import get_openapi
+    from app.api.routes_openai import CHAT_COMPLETION_200_EXAMPLES
+
+    def custom_openapi() -> dict:
+        if app.openapi_schema:
+            return app.openapi_schema
+
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+            tags=app.openapi_tags,
+        )
+
+        try:
+            media = (
+                schema["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]
+                ["content"]["application/json"]
+            )
+            media["examples"] = CHAT_COMPLETION_200_EXAMPLES
+        except KeyError:
+            pass
+
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi
 
 
 # The ASGI app instance used by uvicorn

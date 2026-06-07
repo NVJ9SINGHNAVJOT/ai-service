@@ -191,4 +191,7 @@ class OpenAIChatCompletionResponse(BaseModel):
     model: str
     choices: List[OpenAIChatCompletionChoice]
     usage: OpenAIUsage
-    x_metrics: Optional[OpenAIResponseMetrics] = None
+    x_metrics: Optional[OpenAIResponseMetrics] = Field(
+        None,
+        description="Server-side timing metrics. `null` unless `verbose=true` was sent in the request.",
+    )
