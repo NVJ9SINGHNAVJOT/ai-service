@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.exceptions import MLXManagerError
 from app.core.logging import get_logger, setup_logging
+from app.services.audio_service import AudioService
 from app.services.inference_service import InferenceService
 from app.services.media_inference_service import MediaInferenceService
 
@@ -26,6 +27,7 @@ logger = get_logger(__name__)
 # Module-level singleton shared by all route handlers
 inference_service = InferenceService(cfg=settings)
 media_inference_service = MediaInferenceService(cfg=settings)
+audio_service = AudioService(cfg=settings)
 
 
 @asynccontextmanager
@@ -76,6 +78,10 @@ _OPENAPI_TAGS = [
         "name": "openai-compatible",
         "description": "OpenAI-compatible chat completions (text, multimodal, streaming).",
     },
+    {
+        "name": "audio",
+        "description": "Local OpenAI-compatible speech-to-text (Whisper) and text-to-speech (Kokoro).",
+    },
 ]
 
 
@@ -110,6 +116,7 @@ def create_app() -> FastAPI:
         )
 
     # Register routers
+    from app.api.routes_audio import router as audio_router
     from app.api.routes_health import router as health_router
     from app.api.routes_models import router as models_router
     from app.api.routes_openai import router as openai_router
@@ -117,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(models_router)
     app.include_router(openai_router)
+    app.include_router(audio_router)
 
     _install_custom_openapi(app)
 

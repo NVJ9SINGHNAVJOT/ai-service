@@ -4,8 +4,9 @@ Request logging middleware.
 Attaches a UUID request-id to every request and logs method, URL, client IP,
 headers, query params, and body on arrival — formatted as indented JSON.
 
-For multipart/form-data bodies, file fields are logged as their filename
-(or "unknown") — raw bytes are never logged.
+For multipart/form-data bodies, only a non-consuming summary is logged
+(parsing the form here would exhaust the stream before the route reads it);
+raw bytes are never logged.
 Response logging is handled by send_response (app/utils/response.py).
 """
 
@@ -15,7 +16,6 @@ import json
 import uuid
 from typing import Any
 
-from starlette.datastructures import UploadFile
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -71,14 +71,10 @@ async def _extract_request_body(request: Request) -> Any:
     content_type = request.headers.get("content-type", "")
 
     if "multipart/form-data" in content_type:
-        form = await request.form()
-        result: dict[str, Any] = {}
-        for key, value in form.multi_items():
-            if isinstance(value, UploadFile):
-                result[key] = value.filename or "unknown"
-            else:
-                result[key] = value
-        return result
+        # Parsing the form here (await request.form()) would consume the request
+        # stream and leave the route handler with an empty body. Log a
+        # non-consuming summary instead — raw bytes are never logged anyway.
+        return f"<multipart/form-data, content-length={request.headers.get('content-length', 'unknown')}>"
 
     if "application/json" in content_type:
         try:

@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     # ── HuggingFace ─────────────────────────────────────────────────────────
     hf_token: Optional[str] = None
 
+    # ── Audio (STT / TTS) ───────────────────────────────────────────────────
+    # Downloaded to the HuggingFace cache on first use. Whisper turbo gives the
+    # best accuracy/speed for feeding an LLM; swap to a lighter repo (e.g.
+    # "mlx-community/whisper-base-mlx") to cut the download and memory footprint.
+    stt_model: str = "mlx-community/whisper-large-v3-turbo"
+    tts_model: str = "prince-canuma/Kokoro-82M"
+    tts_voice: str = "af_heart"
+    tts_lang_code: str = "a"  # Kokoro: 'a' = American English, 'b' = British
+
     # ── Resolved paths (computed properties) ───────────────────────────────
 
     @property

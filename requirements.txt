@@ -2,9 +2,26 @@
 mlx-lm>=0.31.3
 mlx-vlm>=0.6.3
 
+# Audio (STT / TTS)
+mlx-whisper>=0.4.3
+mlx-audio>=0.4.4
+soundfile>=0.14.0
+# Kokoro's misaki front-end can't use its [en] extra on Python 3.13
+# (spacy-curated-transformers has no 3.13 wheels), so the English G2P stack is
+# pinned explicitly: base misaki + spacy + the en_core_web_sm model + num2words,
+# with phonemizer-fork & espeakng-loader providing the bundled espeak-ng fallback
+# (no system install needed).
+misaki>=0.7.4
+spacy>=3.8.2
+num2words>=0.5.14
+phonemizer-fork>=3.3.2
+espeakng-loader>=0.2.4
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
 # API server
 fastapi>=0.135.2
 uvicorn[standard]>=0.42.0
+python-multipart>=0.0.20
 pydantic>=2.12.5
 pydantic-settings>=2.13.1
 
