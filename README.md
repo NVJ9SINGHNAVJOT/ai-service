@@ -302,29 +302,22 @@ cp .env.example .env
 
 ### 4. Review `.env`
 
-Current example values:
+The `.env` file allows you to override the default configuration. All values have sensible defaults built into the code, so you only need to uncomment and set the ones you want to change.
 
 ```env
-MODELS_BASE_DIR=models
-DOWNLOADED_MODELS_DIR=models/downloaded
-CUSTOM_MODELS_DIR=models/custom
-MODEL_REGISTRY_FILE=models/registry.json
-
-API_HOST=0.0.0.0
+# ── API server (defaults: 0.0.0.0:8000) ─────────────────────────
 API_PORT=8000
 
+# ── Inference defaults ───────────────────────────────────────────
+# These act as fallbacks if the API caller doesn't specify them.
 DEFAULT_MAX_TOKENS=512
 DEFAULT_TEMPERATURE=0.7
 DEFAULT_TOP_P=0.9
 DEFAULT_REPETITION_PENALTY=1.1
+
+# ── HuggingFace (required for gated/private models) ─────────────
+HF_TOKEN=hf_...
 ```
-
-Optional values:
-
-- `DEFAULT_MODEL`
-- `HF_TOKEN`
-
-Use `HF_TOKEN` only if you need access to a gated Hugging Face model.
 
 ## Quick Start
 

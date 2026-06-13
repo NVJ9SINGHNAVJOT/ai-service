@@ -50,7 +50,6 @@ class Settings(BaseSettings):
     default_temperature: float = 0.7
     default_top_p: float = 0.9
     default_repetition_penalty: float = 1.1
-    default_model: Optional[str] = None
 
     # ── HuggingFace ─────────────────────────────────────────────────────────
     hf_token: Optional[str] = None

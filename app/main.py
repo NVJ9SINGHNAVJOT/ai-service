@@ -33,29 +33,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     FastAPI lifespan handler.
 
-    On startup: ensure model directories exist and optionally pre-load
-    the default model specified in settings.
+    On startup: ensure model directories exist.
     On shutdown: unload any loaded model.
     """
     settings.ensure_directories()
     logger.info("AI Service starting up.")
-
-    if settings.default_model:
-        from pathlib import Path
-        from app.services.model_manager import ModelManager
-        from app.core.exceptions import ModelNotFoundError, ModelLoadError
-
-        try:
-            manager = ModelManager(cfg=settings)
-            info = manager.get_model(settings.default_model)
-            is_vlm = info.backend == "mlx-vlm"
-            if is_vlm:
-                media_inference_service.load(Path(info.path), info.name)
-            else:
-                inference_service.load(Path(info.path), info.name)
-            logger.info("Default model '%s' pre-loaded.", settings.default_model)
-        except (ModelNotFoundError, ModelLoadError) as exc:
-            logger.warning("Could not pre-load default model: %s", exc)
 
     yield  # application runs here
 
