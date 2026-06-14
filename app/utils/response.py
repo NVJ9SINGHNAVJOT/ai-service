@@ -33,13 +33,18 @@ def _dumps(obj: Any) -> str:
         return str(obj)
 
 
+def get_request_id(request: Any) -> str:
+    """Return the request_id stashed on request.state, or 'unknown'."""
+    return getattr(getattr(request, "state", None), "request_id", "unknown")
+
+
 def send_response(
     request: Request,
     body: Any,
     status_code: int = 200,
 ) -> JSONResponse:
     """Log body as pretty JSON and return a JSONResponse."""
-    request_id = getattr(request.state, "request_id", "unknown")
+    request_id = get_request_id(request)
     serializable = jsonable_encoder(body)
 
     logger.info(

@@ -10,6 +10,7 @@ re-consuming the request stream.
 from __future__ import annotations
 
 import io
+import logging
 
 import numpy as np
 
@@ -81,3 +82,59 @@ def test_transcription_endpoint_requires_file(api_client):
     resp = api_client.post("/v1/audio/transcriptions")
 
     assert resp.status_code == 422
+
+
+def test_speech_500_logged_once_with_request_id_and_traceback(api_client, monkeypatch, caplog):
+    """A synthesis failure (500) is logged exactly once, correlated by request_id, with a traceback."""
+    import app.main as main
+
+    def _boom(text, voice=None, speed=1.0):
+        raise InferenceError("input text is empty.")
+
+    monkeypatch.setattr(main.audio_service, "synthesize", _boom)
+
+    with caplog.at_level(logging.INFO):
+        resp = api_client.post("/v1/audio/speech", json={"input": "   "})
+
+    assert resp.status_code == 500
+
+    request_id = resp.headers["X-Request-ID"]
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1  # logged once at the boundary, not also in the route
+    record = errors[0]
+    assert request_id in record.getMessage()
+    assert record.exc_info is not None  # 5xx carries the traceback
+    # the diagnosis-era per-route log line is gone
+    assert not any("Speech synthesis failed" in r.getMessage() for r in caplog.records)
+
+
+def test_speech_400_logged_once_as_warning_with_traceback(api_client, caplog):
+    """A 4xx HTTPException is logged once at warning level with the request_id and a traceback."""
+    with caplog.at_level(logging.INFO):
+        resp = api_client.post("/v1/audio/speech", json={"input": "hi", "response_format": "mp3"})
+
+    assert resp.status_code == 400
+
+    request_id = resp.headers["X-Request-ID"]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    record = warnings[0]
+    assert request_id in record.getMessage()
+    assert "400" in record.getMessage()
+    assert record.exc_info is not None  # traceback attached
+
+
+def test_validation_error_logged_once_with_request_id(api_client, caplog):
+    """A 422 validation error is logged once at warning level with the request_id and a traceback."""
+    with caplog.at_level(logging.INFO):
+        resp = api_client.post("/v1/audio/transcriptions")  # missing the required 'file' field
+
+    assert resp.status_code == 422
+
+    request_id = resp.headers["X-Request-ID"]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    record = warnings[0]
+    assert request_id in record.getMessage()
+    assert "422" in record.getMessage()
+    assert record.exc_info is not None  # traceback attached

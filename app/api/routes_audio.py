@@ -82,10 +82,8 @@ async def create_speech(request: Request, body: SpeechRequest) -> Response:
         sf.write(buffer, audio, sample_rate, format="WAV")
         buffer.seek(0)
     except InferenceError as exc:
-        logger.error("Speech synthesis failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:
-        logger.exception("Unexpected error during speech synthesis")
         raise HTTPException(status_code=500, detail=f"speech synthesis failed: {exc}")
 
     request_id = getattr(request.state, "request_id", "unknown")

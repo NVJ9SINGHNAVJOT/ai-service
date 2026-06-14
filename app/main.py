@@ -10,9 +10,15 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
 from app.core.exceptions import MLXManagerError
@@ -20,6 +26,7 @@ from app.core.logging import get_logger, setup_logging
 from app.services.audio_service import AudioService
 from app.services.inference_service import InferenceService
 from app.services.media_inference_service import MediaInferenceService
+from app.utils.response import get_request_id
 
 setup_logging()
 logger = get_logger(__name__)
@@ -107,12 +114,50 @@ def create_app() -> FastAPI:
     from app.middleware.logging_middleware import LoggingMiddleware
     app.add_middleware(LoggingMiddleware)
 
-    # Domain exception → HTTP error
+    # Errors are logged once, here at the boundary, correlated by request_id.
+    # request.state.request_id is set by LoggingMiddleware before routing.
+
+    # Domain exception → HTTP 500, logged with traceback.
     @app.exception_handler(MLXManagerError)
-    async def mlx_exception_handler(request, exc: MLXManagerError) -> JSONResponse:
+    async def mlx_exception_handler(request: Request, exc: MLXManagerError) -> JSONResponse:
+        logger.error(
+            "Request failed | request_id=%s | %s: %s",
+            get_request_id(request), type(exc).__name__, exc, exc_info=exc,
+        )
         return JSONResponse(
             status_code=500,
             content={"success": False, "message": str(exc), "data": None},
+        )
+
+    # Any HTTPException raised by a route — 5xx at error, 4xx at warning; both with traceback.
+    @app.exception_handler(StarletteHTTPException)
+    async def http_logging_handler(request: Request, exc: StarletteHTTPException) -> Response:
+        log = logger.error if exc.status_code >= 500 else logger.warning
+        log(
+            "Request failed | request_id=%s | %d %s",
+            get_request_id(request), exc.status_code, exc.detail, exc_info=exc,
+        )
+        return await http_exception_handler(request, exc)  # keep the default shaping
+
+    # Request validation failure (422) → warning, with traceback.
+    @app.exception_handler(RequestValidationError)
+    async def validation_logging_handler(request: Request, exc: RequestValidationError) -> Response:
+        logger.warning(
+            "Request failed | request_id=%s | 422 validation error | %s",
+            get_request_id(request), exc.errors(), exc_info=exc,
+        )
+        return await request_validation_exception_handler(request, exc)  # keep the default shaping
+
+    # Catch-all: turn unhandled errors into a clean 500, logged with traceback.
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.error(
+            "Unhandled error | request_id=%s | %s: %s",
+            get_request_id(request), type(exc).__name__, exc, exc_info=exc,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": "internal error", "data": None},
         )
 
     # Register routers
