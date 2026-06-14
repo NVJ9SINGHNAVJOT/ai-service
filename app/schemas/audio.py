@@ -17,7 +17,15 @@ class SpeechRequest(BaseModel):
 
     # Unknown OpenAI fields (e.g. `instructions`) are accepted but ignored so
     # callers using the OpenAI SDK don't get rejected.
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(
+        extra="ignore",
+        json_schema_extra={
+            "example": {
+                "input": "Hello! This is a local text to speech test.",
+                "voice": "af_heart",
+            }
+        },
+    )
 
     input: str = Field(..., description="The text to synthesize into speech.")
     voice: Optional[str] = Field(

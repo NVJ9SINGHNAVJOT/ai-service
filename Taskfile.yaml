@@ -30,13 +30,19 @@ tasks:
       - 'echo "Activate it with: source .venv/bin/activate"'
 
   setup:
-    desc: "Clean the project, create a local virtualenv, and install dependencies"
+    desc: "Clean the project, create a local virtualenv, install dependencies, and fetch speech models"
     cmds:
       - task clean
       - task venv
       - .venv/bin/python -m pip install --upgrade pip
       - .venv/bin/python -m pip install -r requirements.txt
+      - task audio:setup
       - 'echo "Setup complete. Activate the virtual environment with: source .venv/bin/activate"'
+
+  audio:setup:
+    desc: "Pre-download the speech (STT/TTS) model weights so the first voice chat is instant (~1.8 GB)"
+    cmds:
+      - .venv/bin/python -m app.cli.main audio prepare
 
   install:
     desc: "Install all Python dependencies into the active virtualenv"

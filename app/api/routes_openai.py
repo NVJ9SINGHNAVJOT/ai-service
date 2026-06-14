@@ -39,10 +39,8 @@ _IGNORED_CHAT_FIELDS = {
     "stream_options",
 }
 
-# Request scenarios surfaced in Swagger UI. These mirror the Postman collection
-# (postman/ai-service.postman_collection.json) so the interactive docs and the
-# Postman runner stay in lock-step. Replace the placeholder model names and image
-# path with values that exist on your machine, and the audio data with real
+# Request scenarios surfaced in Swagger UI. Replace the placeholder model names and
+# image path with values that exist on your machine, and the audio data with real
 # base64-encoded audio bytes, before sending.
 _CHAT_COMPLETION_EXAMPLES = {
     "text": {
@@ -563,8 +561,8 @@ async def create_chat_completion(
     mlx-lm. The requested `model` is auto-loaded (swapping out any other loaded
     model) before generation.
 
-    Use the **Examples** dropdown above to try each scenario — they mirror the
-    Postman collection, including the negative cases that return HTTP 400.
+    Use the **Examples** dropdown above to try each scenario, including the
+    negative cases that return HTTP 400.
 
     Notes:
     - Usage fields are estimated until tokenizer-based accounting is added.

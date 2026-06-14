@@ -7,6 +7,7 @@ All path settings resolve relative to the project root if not absolute.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +54,9 @@ class Settings(BaseSettings):
 
     # ── HuggingFace ─────────────────────────────────────────────────────────
     hf_token: Optional[str] = None
+    # Cache for HuggingFace model weights (Whisper/Kokoro, etc.). Kept inside the
+    # project by default so downloads don't land in the global ~/.cache/huggingface.
+    hf_cache_dir: str = "models/hf-cache"
 
     # ── Audio (STT / TTS) ───────────────────────────────────────────────────
     # Downloaded to the HuggingFace cache on first use. Whisper turbo gives the
@@ -85,6 +89,11 @@ class Settings(BaseSettings):
         """Resolved absolute path to the runtime state directory."""
         return _resolve_path(self.model_runtime_dir)
 
+    @property
+    def hf_cache_path(self) -> Path:
+        """Resolved absolute path to the project-local HuggingFace cache."""
+        return _resolve_path(self.hf_cache_dir)
+
     def ensure_directories(self) -> None:
         """
         Create the filesystem layout expected by the app.
@@ -96,6 +105,7 @@ class Settings(BaseSettings):
         self.custom_models_path.mkdir(parents=True, exist_ok=True)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         self.runtime_path.mkdir(parents=True, exist_ok=True)
+        self.hf_cache_path.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_path(path_str: str) -> Path:
@@ -108,3 +118,8 @@ def _resolve_path(path_str: str) -> Path:
 
 # Module-level singleton — import this in all other modules.
 settings = Settings()
+
+# Route HuggingFace downloads (Whisper/Kokoro weights, etc.) into the project's
+# models/ dir instead of the global ~/.cache/huggingface. Must run before
+# huggingface_hub is first imported anywhere; an explicit HF_HUB_CACHE still wins.
+os.environ.setdefault("HF_HUB_CACHE", str(settings.hf_cache_path))

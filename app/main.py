@@ -57,13 +57,13 @@ _API_DESCRIPTION = """
 Local LLM management and inference server for Apple Silicon (MLX).
 
 **OpenAI-compatible** chat completions plus model lifecycle management. Every
-endpoint below ships interactive **Examples** that mirror the Postman collection
-(`postman/ai-service.postman_collection.json`), including the negative cases that
+endpoint below ships interactive **Examples**, including the negative cases that
 return HTTP 400 — pick one from the *Examples* dropdown and hit **Try it out**.
 
 ### Highlights
 - `POST /v1/chat/completions` — text, image, and audio chat; SSE streaming;
   `verbose` timing metrics; OpenAI-style `stop` sequences.
+- `POST /v1/audio/transcriptions` · `/v1/audio/speech` — local speech-to-text (Whisper) and text-to-speech (Kokoro), fully on-device.
 - `POST /api/v1/models/load` · `/unload` — swap the in-memory model.
 - `GET /api/v1/models` — list local models with state, `backend` (mlx-lm / mlx-vlm), and `input_modalities` (text / image / audio / video).
 

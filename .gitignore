@@ -21,6 +21,7 @@ env/
 # Models (usually too large for git)
 models/downloaded/
 models/custom/
+models/hf-cache/
 # Keep registry tracked if desired — comment out to ignore:
 models/registry.json
 
@@ -51,6 +52,3 @@ logs/
 
 # tmp files
 tmp/
-
-# Postman
-postman/

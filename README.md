@@ -53,6 +53,7 @@ This project is not trying to be a full distributed inference platform. It is in
 - Start interactive terminal chat
 - Run a FastAPI-based OpenAI-compatible inference API
 - Expose an OpenAI-compatible `/v1/chat/completions` endpoint
+- Run fully local speech-to-text and text-to-speech through OpenAI-compatible `/v1/audio/*` endpoints (Whisper + Kokoro on MLX)
 - Support streaming in both CLI and API
 - Auto-load models on demand when an inference request arrives
 - Keep the current API model loaded until it is swapped, explicitly unloaded, or the server stops
@@ -74,19 +75,22 @@ app/
 ├── api/                          # FastAPI routers (thin HTTP layer)
 │   ├── routes_health.py          #   GET  /health
 │   ├── routes_models.py          #   GET/POST /api/v1/models[...]
-│   └── routes_openai.py          #   POST /v1/chat/completions
+│   ├── routes_openai.py          #   POST /v1/chat/completions
+│   └── routes_audio.py           #   POST /v1/audio/transcriptions, /v1/audio/speech
 ├── cli/
-│   └── main.py                   # Typer CLI: models / chat / chat-media / serve
+│   └── main.py                   # Typer CLI: models / audio / chat / chat-media / serve
 ├── core/
 │   ├── exceptions.py             # Domain exception hierarchy
 │   └── logging.py                # Logging setup
 ├── schemas/
 │   ├── inference.py              # Chat + OpenAI request/response models
-│   └── model.py                  # Model-management payloads
+│   ├── model.py                  # Model-management payloads
+│   └── audio.py                  # STT / TTS request/response models
 ├── services/                     # Business logic
 │   ├── base_inference_service.py #   LoadedModelService ABC (shared lifecycle)
 │   ├── inference_service.py      #   Text inference (mlx-lm)
 │   ├── media_inference_service.py#   Multimodal inference (mlx-vlm)
+│   ├── audio_service.py          #   Speech-to-text (mlx-whisper) + text-to-speech (mlx-audio)
 │   ├── chat_session.py           #   Interactive terminal text chat
 │   ├── media_chat_session.py     #   Interactive terminal image/audio chat
 │   ├── model_manager.py          #   Download / list / update / delete / registry
@@ -95,8 +99,9 @@ app/
 └── main.py                       # App factory, CORS, routers, shared singletons
 
 models/
-├── downloaded/                   # Models fetched from Hugging Face
+├── downloaded/                   # Chat models fetched from Hugging Face
 ├── custom/                       # Manually placed model folders
+├── hf-cache/                     # HuggingFace cache for speech models (Whisper/Kokoro)
 ├── runtime/                      # Transient activity marker files
 └── registry.json                # Metadata for downloaded models
 
@@ -142,6 +147,7 @@ This is where the main business logic lives.
 - `base_inference_service.py` defines `LoadedModelService`, the abstract base that owns the shared model lifecycle (lock, loaded-model state, load timing, runtime marker, and generation kwargs). Both inference services extend it so the OpenAI route can treat either backend through one interface
 - `inference_service.py` loads a text model with `mlx-lm` and performs generate/chat calls
 - `media_inference_service.py` loads a multimodal model with `mlx-vlm` for image/audio chat completions
+- `audio_service.py` runs local speech-to-text (Whisper via `mlx-whisper`) and text-to-speech (Kokoro via `mlx-audio`); both load lazily and stay resident alongside the chat model
 - `chat_session.py` runs the interactive terminal text chat loop
 - `media_chat_session.py` runs the interactive terminal image/audio chat loop
 - `model_runtime_state.py` persists tiny marker files so `downloading` / `running` states are visible across processes
@@ -161,15 +167,24 @@ Typer-based command-line interface for people who want to manage models or chat 
 ### `app/main.py`
 
 Creates the FastAPI app, configures CORS, registers routes, and creates the shared
-`inference_service` (text / mlx-lm) and `media_inference_service` (multimodal / mlx-vlm)
-singletons that the routes reuse across requests.
+`inference_service` (text / mlx-lm), `media_inference_service` (multimodal / mlx-vlm),
+and `audio_service` (STT/TTS) singletons that the routes reuse across requests.
 
 ## How Model Storage Works
 
-There are two model locations:
+There are two chat-model locations:
 
 - `models/downloaded/`
 - `models/custom/`
+
+Speech models (Whisper for STT, Kokoro for TTS) are cached separately in the
+project-local HuggingFace cache:
+
+- `models/hf-cache/`
+
+This keeps every download inside the project instead of the global
+`~/.cache/huggingface`. Override it with `HF_CACHE_DIR` (or an explicit
+`HF_HUB_CACHE`).
 
 There is also a runtime activity directory:
 
@@ -317,6 +332,15 @@ DEFAULT_REPETITION_PENALTY=1.1
 
 # ── HuggingFace (required for gated/private models) ─────────────
 HF_TOKEN=hf_...
+
+# ── Speech models (STT / TTS) ───────────────────────────────────
+STT_MODEL=mlx-community/whisper-large-v3-turbo
+TTS_MODEL=prince-canuma/Kokoro-82M
+TTS_VOICE=af_heart
+TTS_LANG_CODE=a
+
+# ── Model cache (where HF weights download; default: project-local) ──
+HF_CACHE_DIR=models/hf-cache
 ```
 
 ## Quick Start
@@ -441,6 +465,16 @@ task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16 IMAGE=/path/to/image
 task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16
 ```
 
+### Speech models (STT / TTS)
+
+```bash
+task audio:setup
+```
+
+Pre-downloads the Whisper (STT) and Kokoro (TTS) weights (~1.8 GB) into
+`models/hf-cache/` so the first voice request is instant. `task setup` runs this
+automatically as its final step.
+
 ### Testing
 
 ```bash
@@ -496,6 +530,14 @@ python -m app.cli.main models update --name mlx-community__Llama-3.2-3B-Instruct
 ```bash
 python -m app.cli.main models delete --name mlx-community__Llama-3.2-3B-Instruct-4bit --force
 ```
+
+### Prepare speech models
+
+```bash
+python -m app.cli.main audio prepare
+```
+
+Pre-downloads the STT (Whisper) and TTS (Kokoro) weights into `models/hf-cache/`.
 
 ### Chat with a model
 
@@ -570,16 +612,17 @@ Use:
 
 ## API Overview
 
-The API has two main groups of routes:
+The API has these groups of routes:
 
 - health
 - model management
-
-The inference surface is OpenAI-compatible chat completions.
+- OpenAI-compatible chat completions
+- OpenAI-compatible audio (speech-to-text and text-to-speech)
 
 Text-only requests run through `mlx-lm`. Requests that include image or audio
 content in OpenAI-style multimodal message parts are routed through `mlx-vlm`
-automatically.
+automatically. Speech transcription and synthesis run through `mlx-whisper` and
+`mlx-audio`.
 
 ## API Endpoints
 
@@ -590,6 +633,8 @@ automatically.
 | POST | `/api/v1/models/load` | Load a model into memory |
 | POST | `/api/v1/models/unload` | Unload the currently loaded model |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
+| POST | `/v1/audio/transcriptions` | Speech-to-text (Whisper) — multipart audio → text |
+| POST | `/v1/audio/speech` | Text-to-speech (Kokoro) — text → WAV audio |
 
 ## Health Endpoint
 
@@ -636,6 +681,61 @@ curl -X POST http://127.0.0.1:8000/api/v1/models/unload \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
+
+## Voice: Speech-to-Text & Text-to-Speech
+
+Two local, OpenAI-compatible audio endpoints run fully on-device — no audio or
+text ever leaves the machine.
+
+- **STT** — `POST /v1/audio/transcriptions`: a multipart audio upload returns
+  `{ "text": ... }`, transcribed by Whisper on MLX (`mlx-whisper`).
+- **TTS** — `POST /v1/audio/speech`: a JSON body `{ "input": "...", "voice": "af_heart" }`
+  returns WAV audio bytes, synthesized by Kokoro on MLX (`mlx-audio`).
+
+These are independent of chat: no model in this stack emits audio, so a spoken
+reply is produced by sending the model's text reply to the TTS endpoint. (Audio
+*input* to a multimodal `mlx-vlm` model is a separate feature of the chat
+endpoint.)
+
+### Models
+
+The repos are configurable via `.env`; defaults:
+
+- STT: `mlx-community/whisper-large-v3-turbo`
+- TTS: `prince-canuma/Kokoro-82M` (voice `af_heart`, American English)
+
+They download on first use into `models/hf-cache/`. Pre-fetch them so the first
+request doesn't block on a multi-GB download:
+
+```bash
+task audio:setup          # or: python -m app.cli.main audio prepare
+```
+
+### Examples
+
+```bash
+# Transcribe a clip (multipart upload)
+curl -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+  -F "file=@clip.wav;type=audio/wav"
+# → {"text": "..."}
+
+# Synthesize speech (returns WAV bytes)
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"input":"Hello from Kokoro.","voice":"af_heart"}' \
+  --output reply.wav
+```
+
+### Dependencies & notes
+
+- **`ffmpeg`** is required to decode non-WAV uploads (e.g. a browser's webm/opus).
+  Install with `brew install ffmpeg`.
+- Kokoro's text front-end (`misaki`) can't install its `[en]` extra on Python
+  3.13 — its `spacy-curated-transformers` pin has no 3.13 wheels. `requirements.txt`
+  instead pins the working English G2P stack explicitly (`misaki` + `spacy` +
+  `en_core_web_sm` + `num2words` + `phonemizer-fork` + `espeakng-loader`, which
+  bundles espeak-ng so no `brew install espeak-ng` is needed). This matches
+  Kokoro's default behavior — no quality difference.
 
 ## Sending Chat History
 
@@ -859,12 +959,12 @@ When the server is running, FastAPI also exposes built-in docs:
 - `http://127.0.0.1:8000/redoc`
 - `http://127.0.0.1:8000/openapi.json`
 
-Every endpoint in Swagger UI (`/docs`) ships interactive **Examples** that mirror the
-Postman collection in [postman/ai-service.postman_collection.json](/Users/navjot/Desktop/GitRepos/ai-service/postman/ai-service.postman_collection.json) —
-including text, image, audio, streaming, verbose, and `stop` scenarios, plus the negative
-cases that return `400`. Pick one from the *Examples* dropdown and press **Try it out**.
-Replace placeholder model names, image paths, and audio data with values that exist on
-your machine before sending.
+Swagger UI (`/docs`) is the single source for trying the API. Every endpoint ships
+interactive **Examples** — including text, image, audio, streaming, verbose, and
+`stop` scenarios, plus the negative cases that return `400`. Pick one from the
+*Examples* dropdown and press **Try it out**. For the speech-to-text endpoint, use
+the file picker to upload an audio clip directly. Replace placeholder model names,
+image paths, and audio data with values that exist on your machine before sending.
 
 ## How Inference Works Internally
 

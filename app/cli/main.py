@@ -37,6 +37,9 @@ cli = typer.Typer(
 models_app = typer.Typer(help="Manage local AI models.", no_args_is_help=True)
 cli.add_typer(models_app, name="models")
 
+audio_app = typer.Typer(help="Prepare local speech (STT / TTS) models.", no_args_is_help=True)
+cli.add_typer(audio_app, name="audio")
+
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 
@@ -319,6 +322,31 @@ def models_delete(
         _abort(str(exc))
     except ModelBusyError as exc:
         _abort(str(exc))
+
+
+# ── audio prepare ──────────────────────────────────────────────────────────────
+
+@audio_app.command("prepare")
+def audio_prepare() -> None:
+    """
+    Pre-download the speech model weights into the HuggingFace cache.
+
+    Run once (e.g. from `task audio:setup`) so the first voice request doesn't
+    block while a multi-GB Whisper download happens. The repos come from
+    settings: STT_MODEL (Whisper) and TTS_MODEL (Kokoro).
+    """
+    from huggingface_hub import snapshot_download
+
+    targets = [("STT (Whisper)", settings.stt_model), ("TTS (Kokoro)", settings.tts_model)]
+    for label, repo in targets:
+        console.print(f"[dim]Downloading {label} model [cyan]{repo}[/cyan] …[/dim]")
+        try:
+            snapshot_download(repo_id=repo, token=settings.hf_token)
+        except Exception as exc:
+            _abort(f"Failed to download {label} model '{repo}': {exc}")
+        console.print(f"[bold green]✓[/bold green] {label} ready: [cyan]{repo}[/cyan]")
+
+    console.print("[bold green]Speech models ready.[/bold green]")
 
 
 # ── chat ─────────────────────────────────────────────────────────────────────
