@@ -28,6 +28,7 @@ from app.config import Settings
 from app.config import settings as global_settings
 from app.core.exceptions import InferenceError
 from app.core.logging import get_logger
+from app.patches import patch_interpolate_ceil_drift
 
 logger = get_logger(__name__)
 
@@ -97,6 +98,7 @@ class AudioService:
                 return
             try:
                 self._configure_espeak()
+                patch_interpolate_ceil_drift()  # see app/patches + PATCHES.md
                 from mlx_audio.utils import load_model  # type: ignore
 
                 logger.info("Loading TTS model '%s' …", self._cfg.tts_model)
@@ -151,4 +153,5 @@ class AudioService:
         except InferenceError:
             raise
         except Exception as exc:
+            logger.exception("TTS synthesis failed for text of length %d", len(text))
             raise InferenceError(f"speech synthesis failed: {exc}") from exc
