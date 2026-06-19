@@ -78,7 +78,8 @@ app/
 │   ├── routes_openai.py          #   POST /v1/chat/completions
 │   └── routes_audio.py           #   POST /v1/audio/transcriptions, /v1/audio/speech
 ├── cli/
-│   └── main.py                   # Typer CLI: models / audio / chat / chat-media / serve
+│   ├── main.py                   # Typer CLI: models / audio / chat / chat-media / cli / serve
+│   └── select.py                 # Zero-dep arrow-key picker used by the interactive `cli` command
 ├── core/
 │   ├── exceptions.py             # Domain exception hierarchy
 │   └── logging.py                # Logging setup
@@ -370,6 +371,23 @@ estimated input modes such as `text`, `image`, and `audio`, missing files,
 whether the installed `mlx_lm` appears to support it, and a short
 recommendation.
 
+### Interactive CLI (pick a model, then chat)
+
+```bash
+task cli
+```
+
+This lists your loadable models and lets you move the highlight with the
+↑/↓ arrow keys (or `j`/`k`), press `Enter` to select, and drop straight into a
+chat session — no need to remember the sanitised model name. Press `q` or
+`Ctrl+C` to cancel the picker.
+
+Chat flags are passed through after `--`:
+
+```bash
+task cli -- --verbose --temperature 0.5
+```
+
 ### Start CLI chat
 
 ```bash
@@ -451,6 +469,16 @@ task run:api API_HOST=127.0.0.1 API_PORT=9000
 ```bash
 task run:cli
 ```
+
+### Interactive CLI
+
+```bash
+task cli
+task cli -- --verbose --temperature 0.5
+```
+
+Launches the arrow-key model picker, then starts a chat with the selected
+model. Anything after `--` is forwarded to the chat session as flags.
 
 ### Model management
 
@@ -538,6 +566,17 @@ python -m app.cli.main audio prepare
 ```
 
 Pre-downloads the STT (Whisper) and TTS (Kokoro) weights into `models/hf-cache/`.
+
+### Pick a model interactively, then chat
+
+```bash
+python -m app.cli.main cli
+```
+
+Lists loadable models, lets you select one with the ↑/↓ arrow keys and `Enter`,
+then starts a chat. It accepts the same optional chat flags as `chat`
+(`--system`, `--max-tokens`, `--temperature`, `--top-p`, `--repetition-penalty`,
+`--verbose`).
 
 ### Chat with a model
 

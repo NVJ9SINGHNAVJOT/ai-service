@@ -69,6 +69,11 @@ tasks:
     cmds:
       - "{{.PYTHON}} -m app.cli.main --help"
 
+  cli:
+    desc: "Interactive model picker, then chat. Pass flags after --, e.g. task cli -- --verbose --temperature 0.5"
+    cmds:
+      - "{{.PYTHON}} -m app.cli.main cli {{.CLI_ARGS}}"
+
   # ── Model management ─────────────────────────────────────────────────────
 
   model:list:

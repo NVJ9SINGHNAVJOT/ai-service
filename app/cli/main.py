@@ -351,48 +351,20 @@ def audio_prepare() -> None:
 
 # ── chat ─────────────────────────────────────────────────────────────────────
 
-@cli.command("chat")
-def chat(
-    model: str = typer.Option(
-        ...,
-        "--model",
-        "-m",
-        help="Local (sanitised) model name to chat with.",
-    ),
-    system_prompt: Optional[str] = typer.Option(
-        None,
-        "--system",
-        "-s",
-        help="System prompt to use for the session.",
-    ),
-    max_tokens: int = typer.Option(
-        settings.default_max_tokens,
-        "--max-tokens",
-        help="Maximum tokens per response.",
-    ),
-    temperature: float = typer.Option(
-        settings.default_temperature,
-        "--temperature",
-        help="Sampling temperature.",
-    ),
-    top_p: float = typer.Option(
-        settings.default_top_p,
-        "--top-p",
-        help="Nucleus sampling probability.",
-    ),
-    repetition_penalty: float = typer.Option(
-        settings.default_repetition_penalty,
-        "--repetition-penalty",
-        help="Repetition penalty factor.",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Print token and timing stats after each assistant reply.",
-    ),
+def _run_chat(
+    model: str,
+    system_prompt: Optional[str],
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    repetition_penalty: float,
+    verbose: bool,
 ) -> None:
-    """Start an interactive terminal chat session with a local model."""
+    """Load a local model and run an interactive chat session.
+
+    Routes mlx-vlm models to the media chat loop and mlx-lm models to the
+    text chat loop. Shared by the `chat` and `cli` commands.
+    """
     from app.services.model_manager import ModelManager
     from app.services.chat_session import ChatSession
     from app.core.exceptions import InvalidModelPathError, ModelNotFoundError, UnsupportedModelError
@@ -446,6 +418,133 @@ def chat(
             verbose=verbose,
         )
         session.run()
+
+
+@cli.command("chat")
+def chat(
+    model: str = typer.Option(
+        ...,
+        "--model",
+        "-m",
+        help="Local (sanitised) model name to chat with.",
+    ),
+    system_prompt: Optional[str] = typer.Option(
+        None,
+        "--system",
+        "-s",
+        help="System prompt to use for the session.",
+    ),
+    max_tokens: int = typer.Option(
+        settings.default_max_tokens,
+        "--max-tokens",
+        help="Maximum tokens per response.",
+    ),
+    temperature: float = typer.Option(
+        settings.default_temperature,
+        "--temperature",
+        help="Sampling temperature.",
+    ),
+    top_p: float = typer.Option(
+        settings.default_top_p,
+        "--top-p",
+        help="Nucleus sampling probability.",
+    ),
+    repetition_penalty: float = typer.Option(
+        settings.default_repetition_penalty,
+        "--repetition-penalty",
+        help="Repetition penalty factor.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print token and timing stats after each assistant reply.",
+    ),
+) -> None:
+    """Start an interactive terminal chat session with a local model."""
+    _run_chat(
+        model=model,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
+        verbose=verbose,
+    )
+
+
+@cli.command("cli")
+def interactive_cli(
+    system_prompt: Optional[str] = typer.Option(
+        None,
+        "--system",
+        "-s",
+        help="System prompt to use for the session.",
+    ),
+    max_tokens: int = typer.Option(
+        settings.default_max_tokens,
+        "--max-tokens",
+        help="Maximum tokens per response.",
+    ),
+    temperature: float = typer.Option(
+        settings.default_temperature,
+        "--temperature",
+        help="Sampling temperature.",
+    ),
+    top_p: float = typer.Option(
+        settings.default_top_p,
+        "--top-p",
+        help="Nucleus sampling probability.",
+    ),
+    repetition_penalty: float = typer.Option(
+        settings.default_repetition_penalty,
+        "--repetition-penalty",
+        help="Repetition penalty factor.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print token and timing stats after each assistant reply.",
+    ),
+) -> None:
+    """Pick a local model interactively (↑/↓, Enter), then start chatting."""
+    from app.services.model_manager import ModelManager
+    from app.core.exceptions import RegistryError
+    from app.cli.select import select_from_list
+
+    manager = ModelManager()
+    try:
+        models = [m for m in manager.list_models() if m.loadable]
+    except RegistryError as exc:
+        _abort(str(exc))
+
+    if not models:
+        console.print("[yellow]No loadable models found.[/yellow]")
+        console.print(
+            "  Download one with: [cyan]python -m app.cli.main models download --repo <hf-repo>[/cyan]"
+        )
+        raise typer.Exit()
+
+    rows = [(m.name, m.state.value, ", ".join(m.input_modalities)) for m in models]
+    index = select_from_list(
+        rows,
+        title="Select a model to chat with",
+        columns=["Name", "State", "Inputs"],
+    )
+    if index is None:
+        console.print("[dim]Cancelled.[/dim]")
+        raise typer.Exit()
+
+    _run_chat(
+        model=models[index].name,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
+        verbose=verbose,
+    )
 
 
 @cli.command("chat-media")
