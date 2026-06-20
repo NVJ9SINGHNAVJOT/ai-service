@@ -114,3 +114,111 @@ before removing.
 - Upstream regression introduced in commit `aaf5ee6`
   ("Fix Kokoro usage from worker threads").
 - File: `mlx_audio/tts/models/interpolate.py` (the `math.ceil(...)` in `interpolate`).
+
+---
+
+## 2. mlx-vlm — Gemma 4 unused KV-shared weights on `format: mlx` repos
+
+| | |
+|---|---|
+| **Dependency** | `mlx-vlm==0.6.3` (latest at time of writing) |
+| **Where applied** | `app/patches/mlx_vlm_gemma4.py` → `patch_gemma4_shared_kv_load()`, called before `mlx_vlm.load()` in **both** load paths: `app/services/media_inference_service.py::load()` (API) and `app/services/media_chat_session.py::_load_runtime()` (CLI) |
+| **Patched symbol** | `mlx_vlm.models.gemma4.gemma4.Model.load_weights` (overrides the copy inherited from `mlx.nn.Module`) |
+| **Status** | Stopgap — remove once the model upload or mlx-vlm is fixed (see *Removal*) |
+
+### Symptom
+
+`POST /api/v1/models/load` with a Gemma 4 E4B repo (e.g.
+`mlx-community__gemma-4-e4b-it-bf16`) returns **500**. The server log shows:
+
+```text
+ValueError: Received 54 parameters not in model:
+language_model.model.layers.24.self_attn.k_norm.weight,
+language_model.model.layers.24.self_attn.k_proj.weight,
+language_model.model.layers.24.self_attn.v_proj.weight,
+… (layers 24–41)
+```
+
+### Root cause
+
+Some Gemma 4 checkpoints use **KV-sharing**: a `config.json` with
+`num_kv_shared_layers: N` (N > 0) means the last N layers reuse earlier layers'
+keys/values, so mlx-vlm builds them with `kv_shared_only=True` and never allocates
+their `k_proj`/`v_proj`/`k_norm` modules — the checkpoint's copies are dead weight.
+For `gemma-4-e4b-it` that is 42 layers with 18 shared (indices 24–41) → 18 × 3 =
+**54** tensors. (`gemma-4-31b-it` and `gemma-4-26b-a4b-it` set
+`num_kv_shared_layers: 0`, so they have none and the patch does nothing to them.)
+
+mlx-vlm's own `LanguageModel.sanitize()` strips exactly these, but in
+`mlx_vlm/utils.py::load_model` the whole sanitize block is gated on
+`if not is_mlx_format:`. This repo's safetensors metadata is `{'format': 'mlx'}`,
+so mlx-vlm treats it as already-sanitized, **skips the strip**, and the 54
+redundant tensors hit the strict `model.load_weights(...)`, which rejects them.
+It is a packaging bug in the upload (flagged "MLX-format / no sanitization
+needed" but the redundant weights were never stripped). mlx 0.31.2 / mlx-vlm
+0.6.3 / mlx-lm 0.31.3 are all the latest on PyPI — upgrading does not help.
+
+### The fix
+
+Override the gemma4 top-level `Model.load_weights` to drop the unused KV-shared
+tensors before delegating to the original loader, reusing mlx-vlm's own predicate
+`LanguageModel._is_unused_shared_kv_weight` against the built model:
+
+```python
+def load_weights(self, weights, strict=True):
+    lm = getattr(self, "language_model", None)
+    if isinstance(weights, list) and lm is not None and hasattr(lm, "_is_unused_shared_kv_weight"):
+        weights = [(k, v) for (k, v) in weights if not lm._is_unused_shared_kv_weight(k)]
+    return original(self, weights, strict=strict)
+```
+
+This drops exactly what upstream's sanitize would, so the loaded model is
+identical to a correctly-packaged repo — **no accuracy/performance change**. The
+shared layers reuse KV from their source layers (whose projections load normally)
+and never call `k_proj(x)`/`v_proj(x)`, so the dropped tensors have no module to
+load into and never enter the forward pass. Because the predicate reads each
+model's own `num_kv_shared_layers`, the patch is **generic across all gemma4
+repos** — it strips the right layers for any KV-sharing model (quantized too,
+matching `.weight`/`.scales`/`.biases`) and is a **no-op** for non-sharing models
+(drops 0). It is idempotent (guarded by a `_pp_gemma4_kv_patch` marker) and
+best-effort (a failure logs a warning). On success you'll see this the first time
+a media model loads:
+
+```text
+[INFO] app.patches.mlx_vlm_gemma4 — Applied mlx-vlm gemma4 KV-shared weight-strip patch.
+```
+
+### Verification
+
+```python
+from app.patches import patch_gemma4_shared_kv_load
+import mlx_vlm
+
+patch_gemma4_shared_kv_load()
+model, processor = mlx_vlm.load("models/downloaded/mlx-community__gemma-4-e4b-it-bf16", lazy=True)
+# loads without ValueError; logs "dropped 54 unused shared-KV tensors" worth of weights
+```
+
+| | before patch | after patch |
+|---|---|---|
+| `mlx_vlm.load(...)` | `ValueError: Received 54 parameters not in model` | loads OK |
+
+End-to-end: `POST /api/v1/models/load` → 200, then a multimodal chat returns
+output. No-regression: non-sharing gemma4 repos (`gemma-4-31b-it`,
+`gemma-4-26b-a4b-it`) still load with 0 dropped, and the global
+`nn.Module.load_weights` is left untouched so every other model type is unaffected.
+
+### Removal
+
+Delete `app/patches/mlx_vlm_gemma4.py` (plus its export in
+`app/patches/__init__.py` and the two `patch_gemma4_shared_kv_load()` call sites —
+`MediaInferenceService.load()` and `MediaChatSession._load_runtime()`) once either
+the `mlx-community` repo is re-uploaded
+with the redundant shared-KV weights stripped, or mlx-vlm runs its shared-KV
+sanitize even when `is_mlx_format` is true. Re-run the verification above against
+the new version before removing.
+
+- File: `mlx_vlm/utils.py` (the `if not is_mlx_format:` gate around the sanitize
+  block in `load_model`).
+- Stripping logic that should have run: `mlx_vlm/models/gemma4/language.py`
+  (`LanguageModel.sanitize` → `_is_unused_shared_kv_weight`).

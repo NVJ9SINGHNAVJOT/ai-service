@@ -8,5 +8,6 @@ conditions of each patch.
 """
 
 from app.patches.mlx_audio_kokoro import patch_interpolate_ceil_drift
+from app.patches.mlx_vlm_gemma4 import patch_gemma4_shared_kv_load
 
-__all__ = ["patch_interpolate_ceil_drift"]
+__all__ = ["patch_interpolate_ceil_drift", "patch_gemma4_shared_kv_load"]

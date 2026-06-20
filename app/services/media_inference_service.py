@@ -22,6 +22,7 @@ from typing import Any, Generator, List, Optional, Tuple
 from app.config import Settings
 from app.core.exceptions import InferenceError, ModelLoadError
 from app.core.logging import get_logger
+from app.patches import patch_gemma4_shared_kv_load
 from app.schemas.inference import ChatMessage, Role
 from app.services.base_inference_service import LoadedModelService, openai_role_for_template
 
@@ -118,6 +119,8 @@ class MediaInferenceService(LoadedModelService):
                 mlx_vlm = importlib.import_module("mlx_vlm")
                 generate_mod = importlib.import_module("mlx_vlm.generate")
                 prompt_utils_mod = importlib.import_module("mlx_vlm.prompt_utils")
+
+                patch_gemma4_shared_kv_load()
 
                 started_at = time.perf_counter()
                 self._model, self._processor = mlx_vlm.load(str(model_path))

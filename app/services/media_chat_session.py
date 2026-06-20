@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from app.core.exceptions import MediaChatError
+from app.patches import patch_gemma4_shared_kv_load
 from app.services.model_runtime_state import ModelRuntimeState
 
 console = Console()
@@ -118,6 +119,8 @@ class MediaChatSession:
         self._load_image = utils_mod.load_image
         self._prompt_cache_state = generate_mod.PromptCacheState()
         self._vision_cache = vision_cache_mod.VisionFeatureCache()
+
+        patch_gemma4_shared_kv_load()  # see app/patches + PATCHES.md
 
     def _load_model(self) -> None:
         """Load the selected multimodal model."""
