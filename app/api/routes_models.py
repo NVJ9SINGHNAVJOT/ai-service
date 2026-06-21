@@ -26,6 +26,7 @@ from app.schemas.model import (
     APIResponse,
     LoadModelRequest,
     ModelInfo,
+    ModelListResponse,
     UnloadModelRequest,
 )
 from app.services.model_manager import ModelManager
@@ -102,7 +103,7 @@ def _load_model_into_memory(name: str) -> None:
 
 # ── List ─────────────────────────────────────────────────────────────────────
 
-@router.get("", response_model=APIResponse, summary="List all local models")
+@router.get("", response_model=ModelListResponse, summary="List all local models")
 async def list_models(request: Request) -> JSONResponse:
     """Return all models found in downloaded/ and custom/ directories."""
     try:

@@ -219,7 +219,8 @@ runtime state and shows:
 
 The `/api/v1/models` endpoint returns the same core metadata, including a
 best-effort `input_modalities` field such as `["text"]` or
-`["text", "image"]`.
+`["text", "image"]`, and a best-effort `max_context_tokens` field (the model's
+context window, read from `config.json`; `null` when it can't be determined).
 
 The states mean:
 

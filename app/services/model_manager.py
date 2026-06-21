@@ -136,6 +136,29 @@ def _read_model_config(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _read_max_context_tokens(path: Path) -> Optional[int]:
+    """Best-effort read of a model's context window from config.json.
+
+    Tries the common keys in order, including the nested ``text_config`` block
+    used by multimodal models. Returns ``None`` when nothing usable is found.
+    """
+    config = _read_model_config(path)
+    text_config = config.get("text_config")
+    candidates = [
+        config.get("max_position_embeddings"),
+        text_config.get("max_position_embeddings") if isinstance(text_config, dict) else None,
+        config.get("n_positions"),
+        config.get("n_ctx"),
+        config.get("max_sequence_length"),
+    ]
+    for value in candidates:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
 def _detect_input_modalities(path: Path) -> List[str]:
     """
     Infer supported input types from the model config.
@@ -487,6 +510,7 @@ class ModelManager:
             loadable=_resolve_loadable(raw_loadable, model_type_supported, state),
             input_modalities=input_modalities,
             backend=backend,
+            max_context_tokens=_read_max_context_tokens(path),
             size_mb=_dir_size_mb(path),
             created_at=_parse_dt(reg.get("created_at")),
             updated_at=_parse_dt(reg.get("updated_at")),

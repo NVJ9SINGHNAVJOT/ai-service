@@ -39,6 +39,7 @@ class ModelInfo(BaseModel):
     loadable: bool = Field(..., description="True if the directory contains the expected model files")
     input_modalities: list[str] = Field(default_factory=lambda: ["text"], description="Best-effort supported input types")
     backend: str = Field("mlx-lm", description="Inference backend used to load this model: 'mlx-lm' or 'mlx-vlm'")
+    max_context_tokens: Optional[int] = Field(None, description="Model context window in tokens, read from config.json (best-effort)")
     size_mb: Optional[float] = Field(None, description="Approximate total size in MB")
     created_at: Optional[datetime] = Field(None, description="When the model was first registered")
     updated_at: Optional[datetime] = Field(None, description="When the model was last updated")
@@ -67,3 +68,9 @@ class APIResponse(BaseModel):
     success: bool
     message: str
     data: Optional[Any] = None
+
+
+class ModelListResponse(APIResponse):
+    """Envelope for GET /api/v1/models, with the model list typed for docs."""
+
+    data: Optional[list[ModelInfo]] = None
