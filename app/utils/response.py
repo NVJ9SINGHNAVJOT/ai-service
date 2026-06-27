@@ -38,12 +38,16 @@ def get_request_id(request: Any) -> str:
     return getattr(getattr(request, "state", None), "request_id", "unknown")
 
 
-def send_response(
-    request: Request,
+def log_response(
+    request: Any,
     body: Any,
     status_code: int = 200,
-) -> JSONResponse:
-    """Log body as pretty JSON and return a JSONResponse."""
+) -> Any:
+    """Log body as pretty JSON. Returns the JSON-encoded body.
+
+    Use directly for responses that aren't a JSONResponse (e.g. the accumulated
+    SSE body of a stream); send_response wraps this for plain JSON replies.
+    """
     request_id = get_request_id(request)
     serializable = jsonable_encoder(body)
 
@@ -56,4 +60,14 @@ def send_response(
         }),
     )
 
+    return serializable
+
+
+def send_response(
+    request: Request,
+    body: Any,
+    status_code: int = 200,
+) -> JSONResponse:
+    """Log body as pretty JSON and return a JSONResponse."""
+    serializable = log_response(request, body, status_code)
     return JSONResponse(content=serializable, status_code=status_code)

@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.utils.response import send_response
+from app.utils.response import log_response, send_response
 
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
 from app.schemas.inference import (
@@ -584,6 +584,15 @@ async def create_chat_completion(
 
     if body.stream:
         async def sse_stream():
+            # Accumulate every frame so the full SSE body can be logged once the
+            # stream ends (the `finally` also fires on early returns / disconnects,
+            # capturing partial streams).
+            frames: list[str] = []
+
+            def emit(frame: str) -> str:
+                frames.append(frame)
+                return frame
+
             try:
                 initial_chunk = {
                     "id": completion_id,
@@ -598,7 +607,7 @@ async def create_chat_completion(
                         }
                     ],
                 }
-                yield _sse_chunk(initial_chunk)
+                yield emit(_sse_chunk(initial_chunk))
                 if await request.is_disconnected():
                     return
 
@@ -627,17 +636,18 @@ async def create_chat_completion(
                     }
                     if body.verbose and usage is not None:
                         payload["x_metrics"] = _build_verbose_metrics(usage, load_duration_s).model_dump()
-                    yield _sse_chunk(payload)
+                    yield emit(_sse_chunk(payload))
                     if await request.is_disconnected():
                         return
 
-                yield "data: [DONE]\n\n"
+                yield emit("data: [DONE]\n\n")
             except InferenceError as exc:
                 error_payload = {"error": {"message": str(exc), "type": "server_error"}}
-                yield _sse_chunk(error_payload)
-                yield "data: [DONE]\n\n"
+                yield emit(_sse_chunk(error_payload))
+                yield emit("data: [DONE]\n\n")
+            finally:
+                log_response(request, "".join(frames))
 
-        send_response(request, "<streaming SSE>")
         return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
     try:
