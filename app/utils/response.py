@@ -51,14 +51,15 @@ def log_response(
     request_id = get_request_id(request)
     serializable = jsonable_encoder(body)
 
-    logger.info(
-        "Response sent\n%s",
-        _dumps({
-            "request_id": request_id,
-            "status_code": status_code,
-            "body": serializable,
-        }),
-    )
+    envelope = {"request_id": request_id, "status_code": status_code}
+    if isinstance(serializable, str):
+        # Raw text body (e.g. the accumulated SSE stream) — print it below the
+        # envelope with real newlines instead of burying it as an escaped
+        # ("\n\n"-laden) JSON string, which is unreadable for a full stream.
+        logger.info("Response sent\n%s\n%s", _dumps(envelope), serializable)
+    else:
+        envelope["body"] = serializable
+        logger.info("Response sent\n%s", _dumps(envelope))
 
     return serializable
 
