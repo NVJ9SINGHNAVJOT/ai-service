@@ -97,6 +97,12 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
+        # The caller (central server) forwards its own id as X-Correlation-ID so one
+        # user action can be traced across services; "unknown" when absent. We still
+        # generate a fresh request_id local to this service.
+        correlation_id = request.headers.get("X-Correlation-ID") or "unknown"
+        request.state.correlation_id = correlation_id
+
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
 
@@ -105,6 +111,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         logger.info(
             "Request received\n%s",
             _dumps({
+                "correlation_id": correlation_id,
                 "request_id": request_id,
                 "method": request.method,
                 "url": str(request.url),

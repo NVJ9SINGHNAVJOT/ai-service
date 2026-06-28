@@ -38,6 +38,11 @@ def get_request_id(request: Any) -> str:
     return getattr(getattr(request, "state", None), "request_id", "unknown")
 
 
+def get_correlation_id(request: Any) -> str:
+    """Return the correlation_id stashed on request.state, or 'unknown'."""
+    return getattr(getattr(request, "state", None), "correlation_id", "unknown")
+
+
 def log_response(
     request: Any,
     body: Any,
@@ -49,9 +54,10 @@ def log_response(
     SSE body of a stream); send_response wraps this for plain JSON replies.
     """
     request_id = get_request_id(request)
+    correlation_id = get_correlation_id(request)
     serializable = jsonable_encoder(body)
 
-    envelope = {"request_id": request_id, "status_code": status_code}
+    envelope = {"correlation_id": correlation_id, "request_id": request_id, "status_code": status_code}
     if isinstance(serializable, str):
         # Raw text body (e.g. the accumulated SSE stream) — print it below the
         # envelope with real newlines instead of burying it as an escaped
