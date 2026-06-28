@@ -566,6 +566,70 @@ def test_openai_chat_completions_verbose_non_streaming(api_client, monkeypatch):
     assert body["x_metrics"]["eval_rate"] == 48.31
 
 
+def test_openai_chat_completions_verbose_warm_turn_omits_load_duration(api_client, monkeypatch):
+    """On a warm turn (model already resident) load_duration_s is omitted; other metrics remain."""
+    from app.api import routes_openai
+    from app.main import inference_service
+    from app.schemas.model import ModelInfo, ModelSource
+    from app.services.inference_service import InferenceService
+
+    monkeypatch.setattr(
+        routes_openai._manager,
+        "ensure_model_loadable",
+        lambda name: ModelInfo(
+            name=name,
+            repo_id=None,
+            source=ModelSource.custom,
+            path="/tmp/fake-model",
+            loadable=True,
+            size_mb=None,
+            created_at=None,
+            updated_at=None,
+        ),
+    )
+    monkeypatch.setattr(inference_service, "load", lambda model_path, model_name: None)
+    # Model is already the requested one — this turn loads nothing.
+    monkeypatch.setattr(InferenceService, "loaded_model_name", property(lambda self: "my-custom-model"))
+    monkeypatch.setattr(
+        inference_service,
+        "chat_stream",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: iter(
+            [
+                ("Hello", None),
+                (
+                    " world",
+                    {
+                        "prompt_tokens": 13,
+                        "completion_tokens": 43,
+                        "total_tokens": 56,
+                        "finish_reason": "stop",
+                        "metrics": {
+                            "total_duration_s": 1.256830584,
+                            "prompt_eval_duration_s": 0.267349292,
+                            "prompt_eval_rate": 48.63,
+                            "eval_duration_s": 0.890170291,
+                            "eval_rate": 48.31,
+                        },
+                    },
+                ),
+            ]
+        ),
+    )
+    # A stale value from a prior load — must NOT be reported on this warm turn.
+    inference_service._last_load_duration_s = 0.094960042
+
+    resp = api_client.post(
+        "/v1/chat/completions",
+        json={"model": "my-custom-model", "messages": [{"role": "user", "content": "Hello"}], "verbose": True},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["x_metrics"]["load_duration_s"] is None
+    assert body["x_metrics"]["total_duration_s"] == 1.256830584
+    assert body["x_metrics"]["eval_rate"] == 48.31
+
+
 def test_openai_chat_completions_endpoint_accepts_multimodal_messages(api_client, monkeypatch):
     """POST /v1/chat/completions should route image requests through mlx-vlm."""
     from app.api import routes_openai

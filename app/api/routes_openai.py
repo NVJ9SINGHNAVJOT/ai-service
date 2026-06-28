@@ -572,15 +572,19 @@ async def create_chat_completion(
 
     uses_vlm = _request_uses_vlm(body.messages) or _model_is_vlm(body.model)
     if uses_vlm:
-        _ensure_media_model_loaded(body.model)
         from app.main import media_inference_service as active_service
+        already_loaded = active_service.loaded_model_name == body.model
+        _ensure_media_model_loaded(body.model)
     else:
-        _ensure_model_loaded(body.model)
         from app.main import inference_service as active_service
+        already_loaded = active_service.loaded_model_name == body.model
+        _ensure_model_loaded(body.model)
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
-    load_duration_s = active_service.last_load_duration_s
+    # load_duration is per-turn: the real load cost when this request loaded the model,
+    # omitted (None) on a warm turn where the model was already resident.
+    load_duration_s = None if already_loaded else active_service.last_load_duration_s
 
     if body.stream:
         async def sse_stream():
