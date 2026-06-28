@@ -500,6 +500,67 @@ def test_openai_chat_completions_streaming(api_client, monkeypatch):
     assert '"x_metrics": {"total_duration_s": 1.25, "load_duration_s": 0.5' in body
 
 
+def test_openai_chat_completions_streaming_include_usage_without_verbose(api_client, monkeypatch):
+    """stream_options.include_usage should emit a usage chunk even when verbose is off (no x_metrics)."""
+    from app.api import routes_openai
+    from app.main import inference_service
+    from app.schemas.model import ModelInfo, ModelSource
+    from app.services.inference_service import InferenceService
+
+    monkeypatch.setattr(
+        routes_openai._manager,
+        "ensure_model_loadable",
+        lambda name: ModelInfo(
+            name=name,
+            repo_id=None,
+            source=ModelSource.custom,
+            path="/tmp/fake-model",
+            loadable=True,
+            size_mb=None,
+            created_at=None,
+            updated_at=None,
+        ),
+    )
+    monkeypatch.setattr(inference_service, "load", lambda model_path, model_name: None)
+    monkeypatch.setattr(InferenceService, "loaded_model_name", property(lambda self: None))
+    monkeypatch.setattr(
+        inference_service,
+        "chat_stream",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: iter(
+            [
+                ("Hello", None),
+                (
+                    " world",
+                    {
+                        "prompt_tokens": 8,
+                        "completion_tokens": 18,
+                        "total_tokens": 26,
+                        "finish_reason": "stop",
+                    },
+                ),
+            ]
+        ),
+    )
+
+    with api_client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "my-custom-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    ) as resp:
+        body = "".join(resp.iter_text())
+
+    assert resp.status_code == 200
+    # Usage chunk present with the token counts; no x_metrics since verbose was off.
+    assert '"usage": {"prompt_tokens": 8, "completion_tokens": 18, "total_tokens": 26}' in body
+    assert "x_metrics" not in body
+    assert "data: [DONE]" in body
+
+
 def test_openai_chat_completions_verbose_non_streaming(api_client, monkeypatch):
     """verbose=true should include timing metrics in the OpenAI response."""
     from app.api import routes_openai

@@ -585,6 +585,9 @@ async def create_chat_completion(
     # load_duration is per-turn: the real load cost when this request loaded the model,
     # omitted (None) on a warm turn where the model was already resident.
     load_duration_s = None if already_loaded else active_service.last_load_duration_s
+    # Token counts (usage) are emitted whenever the client opts in via stream_options, regardless
+    # of verbose; verbose only adds the richer x_metrics timing block.
+    include_usage = bool((body.stream_options or {}).get("include_usage"))
 
     if body.stream:
         async def sse_stream():
@@ -622,9 +625,12 @@ async def create_chat_completion(
                     top_p=body.top_p,
                     repetition_penalty=body.repetition_penalty,
                 )
+                final_usage: dict | None = None
                 for chunk, usage in _stream_with_stop_sequences(stream_iter, stop_sequences):
                     if await request.is_disconnected():
                         return
+                    if usage is not None:
+                        final_usage = usage
                     payload = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
@@ -643,6 +649,23 @@ async def create_chat_completion(
                     yield emit(_sse_chunk(payload))
                     if await request.is_disconnected():
                         return
+
+                # OpenAI-style final usage chunk (empty choices), sent whenever the client opted in
+                # via stream_options.include_usage — independent of verbose.
+                if include_usage and final_usage is not None:
+                    usage_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": body.model,
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": int(final_usage.get("prompt_tokens", 0)),
+                            "completion_tokens": int(final_usage.get("completion_tokens", 0)),
+                            "total_tokens": int(final_usage.get("total_tokens", 0)),
+                        },
+                    }
+                    yield emit(_sse_chunk(usage_chunk))
 
                 yield emit("data: [DONE]\n\n")
             except InferenceError as exc:
