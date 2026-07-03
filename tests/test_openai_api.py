@@ -77,7 +77,7 @@ def test_removed_custom_inference_routes_return_404(api_client):
 def test_openai_chat_reuses_already_loaded_model(monkeypatch):
     """Chat completions should not reload a model when the same one is already loaded."""
     from app.main import app, inference_service
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     load_calls: list[tuple[object, str]] = []
 
@@ -102,7 +102,7 @@ def test_openai_chat_loads_requested_model_when_switching(monkeypatch):
     from app.api import routes_openai
     from app.main import app, inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     load_calls: list[tuple[str, str]] = []
 
@@ -139,7 +139,7 @@ def test_openai_chat_loads_requested_model_when_switching(monkeypatch):
 def test_models_unload_endpoint_unloads_current_model(monkeypatch):
     """The unload endpoint should call the shared inference service unload()."""
     from app.main import app, inference_service
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(InferenceService, "loaded_model_name", property(lambda self: "my-model"))
     monkeypatch.setattr(inference_service, "unload", lambda: "my-model")
@@ -156,7 +156,7 @@ def test_models_unload_endpoint_unloads_current_model(monkeypatch):
 def test_models_unload_endpoint_rejects_mismatched_name(monkeypatch):
     """The unload endpoint should reject requests for a different loaded model."""
     from app.main import app
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(InferenceService, "loaded_model_name", property(lambda self: "loaded-model"))
 
@@ -172,7 +172,7 @@ def test_openai_chat_completions_endpoint(api_client, monkeypatch):
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -218,7 +218,7 @@ def test_openai_chat_completions_accepts_developer_role(api_client, monkeypatch)
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -260,7 +260,7 @@ def test_openai_chat_completions_ignores_harmless_openai_fields(api_client, monk
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -351,7 +351,7 @@ def test_openai_chat_completions_supports_stop_in_non_streaming(api_client, monk
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -392,7 +392,7 @@ def test_openai_chat_completions_supports_stop_in_streaming(api_client, monkeypa
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -438,7 +438,7 @@ def test_openai_chat_completions_streaming(api_client, monkeypatch):
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -505,7 +505,7 @@ def test_openai_chat_completions_streaming_include_usage_without_verbose(api_cli
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -566,7 +566,7 @@ def test_openai_chat_completions_verbose_non_streaming(api_client, monkeypatch):
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -632,7 +632,7 @@ def test_openai_chat_completions_verbose_warm_turn_omits_load_duration(api_clien
     from app.api import routes_openai
     from app.main import inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     monkeypatch.setattr(
         routes_openai._manager,
@@ -696,7 +696,7 @@ def test_openai_chat_completions_endpoint_accepts_multimodal_messages(api_client
     from app.api import routes_openai
     from app.main import inference_service, media_inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.media_inference_service import MediaInferenceService
+    from app.services.media_inference import MediaInferenceService
 
     def should_not_use_text_loader(name):
         raise AssertionError("Text loader should not be used for image requests.")
@@ -756,7 +756,7 @@ def test_openai_chat_completions_streaming_accepts_input_image_parts(api_client,
     from app.api import routes_openai
     from app.main import inference_service, media_inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.media_inference_service import MediaInferenceService
+    from app.services.media_inference import MediaInferenceService
 
     def should_not_use_text_loader(name):
         raise AssertionError("Text loader should not be used for image requests.")
@@ -830,7 +830,7 @@ def test_openai_chat_completions_endpoint_accepts_input_audio_parts(api_client, 
     from app.api import routes_openai
     from app.main import inference_service, media_inference_service
     from app.schemas.model import ModelInfo, ModelSource
-    from app.services.media_inference_service import MediaInferenceService
+    from app.services.media_inference import MediaInferenceService
 
     def should_not_use_text_loader(name):
         raise AssertionError("Text loader should not be used for audio requests.")

@@ -11,7 +11,7 @@ raw bytes are never logged.
 For JSON chat bodies, base64 media payloads (``input_audio.data`` and
 ``data:`` image URIs inside ``messages[].content[]``) are replaced with a
 short size summary so logs aren't flooded with hundreds of KB of base64.
-Response logging is handled by send_response (app/utils/response.py).
+Response logging is handled by send_response (app/api/response.py).
 """
 
 from __future__ import annotations

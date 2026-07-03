@@ -366,10 +366,10 @@ def _run_chat(
     text chat loop. Shared by the `chat` and `cli` commands.
     """
     from app.services.model_manager import ModelManager
-    from app.services.chat_session import ChatSession
+    from app.cli.chat_session import ChatSession
     from app.core.exceptions import InvalidModelPathError, ModelNotFoundError, UnsupportedModelError
 
-    from app.services.media_chat_session import MediaChatSession
+    from app.cli.media_chat_session import MediaChatSession
 
     manager = ModelManager()
     try:
@@ -595,7 +595,7 @@ def chat_media(
     """Start an interactive media chat session via mlx-vlm."""
     from app.core.exceptions import InvalidModelPathError, MediaChatError, ModelNotFoundError
     from app.services.model_manager import ModelManager
-    from app.services.media_chat_session import MediaChatSession
+    from app.cli.media_chat_session import MediaChatSession
 
     manager = ModelManager()
     try:

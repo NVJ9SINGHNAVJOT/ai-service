@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.utils.response import log_response, send_response
+from app.api.response import log_response, send_response
 
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
 from app.schemas.inference import (

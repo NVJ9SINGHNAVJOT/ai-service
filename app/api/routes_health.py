@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.utils.response import send_response
+from app.api.response import send_response
 
 router = APIRouter(tags=["health"])
 

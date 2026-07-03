@@ -5,7 +5,7 @@ Logs the response body as indented JSON then returns a JSONResponse.
 Accepts plain dicts, Pydantic models, or any JSON-serialisable value.
 
 Usage:
-    from app.utils.response import send_response
+    from app.api.response import send_response
 
     @router.get("/example")
     async def example(request: Request):

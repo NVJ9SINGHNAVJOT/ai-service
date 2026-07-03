@@ -23,10 +23,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.core.exceptions import MLXManagerError
 from app.core.logging import get_logger, setup_logging
-from app.services.audio_service import AudioService
-from app.services.inference_service import InferenceService
-from app.services.media_inference_service import MediaInferenceService
-from app.utils.response import get_request_id
+from app.services.audio import AudioService
+from app.services.inference import InferenceService
+from app.services.media_inference import MediaInferenceService
+from app.api.response import get_request_id
 
 setup_logging()
 logger = get_logger(__name__)
@@ -111,7 +111,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from app.middleware.logging_middleware import LoggingMiddleware
+    from app.api.middleware import LoggingMiddleware
     app.add_middleware(LoggingMiddleware)
 
     # Errors are logged once, here at the boundary, correlated by request_id.

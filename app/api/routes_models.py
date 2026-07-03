@@ -14,7 +14,7 @@ from typing import List
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from app.utils.response import send_response
+from app.api.response import send_response
 
 from app.core.exceptions import (
     InvalidModelPathError,

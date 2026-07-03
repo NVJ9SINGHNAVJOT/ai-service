@@ -24,7 +24,7 @@ from app.core.exceptions import InferenceError, ModelLoadError
 from app.core.logging import get_logger
 from app.patches import patch_gemma4_shared_kv_load
 from app.schemas.inference import ChatMessage, Role
-from app.services.base_inference_service import LoadedModelService, openai_role_for_template
+from app.services.base import LoadedModelService, openai_role_for_template
 
 logger = get_logger(__name__)
 

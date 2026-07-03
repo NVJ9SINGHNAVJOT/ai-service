@@ -10,13 +10,13 @@ from pathlib import Path
 def test_chat_session_uses_streaming(monkeypatch):
     """ChatSession should build the assistant response from streamed chunks."""
     from app.schemas.inference import ChatMessage, Role
-    from app.services.chat_session import ChatSession
+    from app.cli.chat_session import ChatSession
 
     prompts = iter(["Hello", "quit"])
     printed: list[str] = []
 
-    monkeypatch.setattr("app.services.chat_session.Prompt.ask", lambda _: next(prompts))
-    monkeypatch.setattr("app.services.chat_session.console.print", lambda *args, **kwargs: printed.append("" if not args else str(args[0])))
+    monkeypatch.setattr("app.cli.chat_session.Prompt.ask", lambda _: next(prompts))
+    monkeypatch.setattr("app.cli.chat_session.console.print", lambda *args, **kwargs: printed.append("" if not args else str(args[0])))
 
     session = ChatSession(model_path=Path("/tmp/fake-model"), model_name="my-model")
     session._history = [ChatMessage(role=Role.system, content="You are helpful.")]
@@ -36,13 +36,13 @@ def test_chat_session_uses_streaming(monkeypatch):
 def test_chat_session_ctrl_c_stops_current_reply_but_keeps_session(monkeypatch):
     """Ctrl+C during generation should keep the chat open and preserve partial output."""
     from app.schemas.inference import ChatMessage, Role
-    from app.services.chat_session import ChatSession
+    from app.cli.chat_session import ChatSession
 
     prompts = iter(["Hello", "Next", "quit"])
     printed: list[str] = []
 
-    monkeypatch.setattr("app.services.chat_session.Prompt.ask", lambda _: next(prompts))
-    monkeypatch.setattr("app.services.chat_session.console.print", lambda *args, **kwargs: printed.append("" if not args else str(args[0])))
+    monkeypatch.setattr("app.cli.chat_session.Prompt.ask", lambda _: next(prompts))
+    monkeypatch.setattr("app.cli.chat_session.console.print", lambda *args, **kwargs: printed.append("" if not args else str(args[0])))
 
     session = ChatSession(model_path=Path("/tmp/fake-model"), model_name="my-model")
     session._history = [ChatMessage(role=Role.system, content="You are helpful.")]
@@ -66,13 +66,13 @@ def test_chat_session_ctrl_c_stops_current_reply_but_keeps_session(monkeypatch):
 def test_chat_session_verbose_stats(monkeypatch):
     """ChatSession should print verbose timing/token stats when enabled."""
     from app.schemas.inference import ChatMessage, Role
-    from app.services.chat_session import ChatSession
+    from app.cli.chat_session import ChatSession
 
     prompts = iter(["Hello", "quit"])
     printed: list[str] = []
 
-    monkeypatch.setattr("app.services.chat_session.Prompt.ask", lambda _: next(prompts))
-    monkeypatch.setattr("app.services.chat_session.console.print", lambda *args, **kwargs: printed.append("" if not args else str(args[0])))
+    monkeypatch.setattr("app.cli.chat_session.Prompt.ask", lambda _: next(prompts))
+    monkeypatch.setattr("app.cli.chat_session.console.print", lambda *args, **kwargs: printed.append("" if not args else str(args[0])))
 
     session = ChatSession(model_path=Path("/tmp/fake-model"), model_name="my-model", verbose=True)
     session._history = [ChatMessage(role=Role.system, content="You are helpful.")]
@@ -115,7 +115,7 @@ def test_chat_session_verbose_stats(monkeypatch):
 def test_inference_service_retries_chat_template_with_user_first_messages():
     """User-first tokenizers should keep their native template by folding system text into the first user turn."""
     from app.schemas.inference import ChatMessage, Role
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     calls: list[list[dict[str, str]]] = []
 
@@ -147,7 +147,7 @@ def test_inference_service_retries_chat_template_with_user_first_messages():
 def test_inference_service_chat_stream_trims_end_of_turn_markers(monkeypatch):
     """Chat streaming should stop before model-specific turn markers leak into the reply."""
     from app.schemas.inference import ChatMessage, Role
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     svc = InferenceService()
     svc._model = object()
@@ -193,7 +193,7 @@ def test_inference_service_generate_stream_synthesizes_usage_without_finish_reas
     import sys
     from types import SimpleNamespace
 
-    from app.services.inference_service import InferenceService
+    from app.services.inference import InferenceService
 
     svc = InferenceService()
     svc._model = object()

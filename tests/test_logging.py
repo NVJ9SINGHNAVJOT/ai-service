@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture()
 def correlation_client() -> TestClient:
     """Minimal app wrapped in LoggingMiddleware that echoes the ids it recorded."""
-    from app.middleware.logging_middleware import LoggingMiddleware
+    from app.api.middleware import LoggingMiddleware
 
     app = FastAPI()
     app.add_middleware(LoggingMiddleware)

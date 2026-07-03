@@ -22,7 +22,7 @@ from fastapi.responses import Response
 from app.core.exceptions import InferenceError
 from app.core.logging import get_logger
 from app.schemas.audio import SpeechRequest, TranscriptionResponse
-from app.utils.response import send_response
+from app.api.response import send_response
 
 logger = get_logger(__name__)
 

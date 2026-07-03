@@ -72,14 +72,18 @@ The project uses `mlx-lm`, which is built for Apple's MLX stack and is intended 
 
 ```text
 app/
-├── api/                          # FastAPI routers (thin HTTP layer)
+├── api/                          # HTTP delivery layer (FastAPI/Starlette only)
 │   ├── routes_health.py          #   GET  /health
 │   ├── routes_models.py          #   GET/POST /api/v1/models[...]
 │   ├── routes_openai.py          #   POST /v1/chat/completions
-│   └── routes_audio.py           #   POST /v1/audio/transcriptions, /v1/audio/speech
-├── cli/
-│   ├── main.py                   # Typer CLI: models / audio / chat / chat-media / cli / serve
-│   └── select.py                 # Zero-dep arrow-key picker used by the interactive `cli` command
+│   ├── routes_audio.py           #   POST /v1/audio/transcriptions, /v1/audio/speech
+│   ├── middleware.py             #   LoggingMiddleware (request-id / correlation-id / body summary)
+│   └── response.py               #   send_response / log_response / get_request_id helpers
+├── cli/                          # Terminal delivery layer (Typer/Rich only)
+│   ├── main.py                   #   Typer CLI: models / audio / chat / chat-media / cli / serve
+│   ├── select.py                 #   Zero-dep arrow-key picker used by the interactive `cli` command
+│   ├── chat_session.py           #   Interactive terminal text chat
+│   └── media_chat_session.py     #   Interactive terminal image/audio chat
 ├── core/
 │   ├── exceptions.py             # Domain exception hierarchy
 │   └── logging.py                # Logging setup
@@ -87,13 +91,11 @@ app/
 │   ├── inference.py              # Chat + OpenAI request/response models
 │   ├── model.py                  # Model-management payloads
 │   └── audio.py                  # STT / TTS request/response models
-├── services/                     # Business logic
-│   ├── base_inference_service.py #   LoadedModelService ABC (shared lifecycle)
-│   ├── inference_service.py      #   Text inference (mlx-lm)
-│   ├── media_inference_service.py#   Multimodal inference (mlx-vlm)
-│   ├── audio_service.py          #   Speech-to-text (mlx-whisper) + text-to-speech (mlx-audio)
-│   ├── chat_session.py           #   Interactive terminal text chat
-│   ├── media_chat_session.py     #   Interactive terminal image/audio chat
+├── services/                     # Pure shared business logic (no HTTP, no terminal)
+│   ├── base.py                   #   LoadedModelService ABC (shared lifecycle)
+│   ├── inference.py              #   Text inference (mlx-lm)
+│   ├── media_inference.py        #   Multimodal inference (mlx-vlm)
+│   ├── audio.py                  #   Speech-to-text (mlx-whisper) + text-to-speech (mlx-audio)
 │   ├── model_manager.py          #   Download / list / update / delete / registry
 │   └── model_runtime_state.py    #   Cross-process "downloading"/"running" markers
 ├── config.py                     # Settings (env / .env) and resolved paths
@@ -145,25 +147,34 @@ These define the shapes of:
 This is where the main business logic lives.
 
 - `model_manager.py` handles downloading, registry updates, listing, updating, and deleting models
-- `base_inference_service.py` defines `LoadedModelService`, the abstract base that owns the shared model lifecycle (lock, loaded-model state, load timing, runtime marker, and generation kwargs). Both inference services extend it so the OpenAI route can treat either backend through one interface
-- `inference_service.py` loads a text model with `mlx-lm` and performs generate/chat calls
-- `media_inference_service.py` loads a multimodal model with `mlx-vlm` for image/audio chat completions
-- `audio_service.py` runs local speech-to-text (Whisper via `mlx-whisper`) and text-to-speech (Kokoro via `mlx-audio`); both load lazily and stay resident alongside the chat model
-- `chat_session.py` runs the interactive terminal text chat loop
-- `media_chat_session.py` runs the interactive terminal image/audio chat loop
+- `base.py` defines `LoadedModelService`, the abstract base that owns the shared model lifecycle (lock, loaded-model state, load timing, runtime marker, and generation kwargs). Both inference services extend it so the OpenAI route can treat either backend through one interface
+- `inference.py` loads a text model with `mlx-lm` and performs generate/chat calls
+- `media_inference.py` loads a multimodal model with `mlx-vlm` for image/audio chat completions
+- `audio.py` runs local speech-to-text (Whisper via `mlx-whisper`) and text-to-speech (Kokoro via `mlx-audio`); both load lazily and stay resident alongside the chat model
 - `model_runtime_state.py` persists tiny marker files so `downloading` / `running` states are visible across processes
+
+The interactive terminal chat loops (`chat_session.py`, `media_chat_session.py`)
+live under `app/cli/`, not here — they are CLI-only and are covered below.
 
 ### `app/api/*`
 
-FastAPI route files. These are intentionally thin and mostly:
+The HTTP delivery layer. Route files (`routes_*.py`) are intentionally thin and mostly:
 
 - validate request bodies
 - call service methods
 - convert exceptions into HTTP responses
 
-### `app/cli/main.py`
+This layer also holds the HTTP-only cross-cutting helpers: `middleware.py`
+(request logging + request/correlation ids) and `response.py` (response
+envelope + logging helpers). They live here rather than in a top-level package
+because they only ever run inside the FastAPI server.
 
-Typer-based command-line interface for people who want to manage models or chat directly from terminal.
+### `app/cli/*`
+
+Typer-based command-line interface for people who want to manage models or chat
+directly from terminal. Alongside `main.py` and the `select.py` picker, this is
+where the interactive chat loops live (`chat_session.py`, `media_chat_session.py`)
+since they are terminal-only.
 
 ### `app/main.py`
 
@@ -1100,8 +1111,8 @@ If you are still learning Python, this is a good order to read files:
 2. `app/schemas/model.py`
 3. `app/schemas/inference.py`
 4. `app/services/model_manager.py`
-5. `app/services/inference_service.py`
-6. `app/services/chat_session.py`
+5. `app/services/inference.py`
+6. `app/cli/chat_session.py`
 7. `app/api/routes_models.py`
 8. `app/api/routes_openai.py`
 9. `app/main.py`

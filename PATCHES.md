@@ -13,7 +13,7 @@ how to verify it, and the condition under which it can be removed.
 | | |
 |---|---|
 | **Dependency** | `mlx-audio==0.4.4` (latest at time of writing) |
-| **Where applied** | `app/patches/mlx_audio_kokoro.py` → `patch_interpolate_ceil_drift()`, called from `app/services/audio_service.py::_ensure_tts_loaded()` before the model loads |
+| **Where applied** | `app/patches/mlx_audio_kokoro.py` → `patch_interpolate_ceil_drift()`, called from `app/services/audio.py::_ensure_tts_loaded()` before the model loads |
 | **Patched symbol** | `mlx_audio.tts.models.interpolate.interpolate` (and the rebound copy in `mlx_audio.tts.models.kokoro.istftnet`) |
 | **Status** | Stopgap — remove once upstream ships the fix (see *Removal*) |
 
@@ -122,7 +122,7 @@ before removing.
 | | |
 |---|---|
 | **Dependency** | `mlx-vlm==0.6.3` (latest at time of writing) |
-| **Where applied** | `app/patches/mlx_vlm_gemma4.py` → `patch_gemma4_shared_kv_load()`, called before `mlx_vlm.load()` in **both** load paths: `app/services/media_inference_service.py::load()` (API) and `app/services/media_chat_session.py::_load_runtime()` (CLI) |
+| **Where applied** | `app/patches/mlx_vlm_gemma4.py` → `patch_gemma4_shared_kv_load()`, called before `mlx_vlm.load()` in **both** load paths: `app/services/media_inference.py::load()` (API) and `app/cli/media_chat_session.py::_load_runtime()` (CLI) |
 | **Patched symbol** | `mlx_vlm.models.gemma4.gemma4.Model.load_weights` (overrides the copy inherited from `mlx.nn.Module`) |
 | **Status** | Stopgap — remove once the model upload or mlx-vlm is fixed (see *Removal*) |
 

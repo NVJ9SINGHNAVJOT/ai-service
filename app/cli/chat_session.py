@@ -18,7 +18,7 @@ from rich.prompt import Prompt
 from app.core.exceptions import InferenceError, ModelLoadError
 from app.core.logging import get_logger
 from app.schemas.inference import ChatMessage, Role
-from app.services.inference_service import InferenceService
+from app.services.inference import InferenceService
 
 logger = get_logger(__name__)
 console = Console()
