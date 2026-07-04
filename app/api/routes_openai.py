@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.api.response import get_request_id, log_response, send_response
+from app.api.response import log_response, send_response
 
 from app.config import settings
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
@@ -692,9 +692,11 @@ async def create_chat_completion(
                 # generator is its own boundary. Log once here (with traceback)
                 # so a mid-stream failure is never silent, then surface a clean
                 # error frame to the client.
+                # request_id/correlation_id are added by the log formatter's
+                # context prefix (the stream runs within the request's context).
                 logger.error(
-                    "Streaming chat completion failed | request_id=%s | %s: %s",
-                    get_request_id(request), type(exc).__name__, exc, exc_info=exc,
+                    "Streaming chat completion failed | %s: %s",
+                    type(exc).__name__, exc, exc_info=exc,
                 )
                 error_payload = {"error": {"message": str(exc), "type": "server_error"}}
                 yield emit_chunk(error_payload)

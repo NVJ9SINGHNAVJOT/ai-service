@@ -22,11 +22,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
 from app.core.exceptions import MLXManagerError
-from app.core.logging import get_logger, setup_logging
+from app.core.logging import correlation_id_var, get_logger, request_id_var, setup_logging
 from app.services.audio import AudioService
 from app.services.inference import InferenceService
 from app.services.media_inference import MediaInferenceService
-from app.api.response import get_request_id, log_response, send_response
+from app.api.response import get_correlation_id, get_request_id, log_response, send_response
 
 setup_logging()
 logger = get_logger(__name__)
@@ -120,9 +120,11 @@ def create_app() -> FastAPI:
     # Domain exception → HTTP 500, logged with traceback.
     @app.exception_handler(MLXManagerError)
     async def mlx_exception_handler(request: Request, exc: MLXManagerError) -> JSONResponse:
+        # request_id/correlation_id are added by the log formatter (this handler
+        # runs inside LoggingMiddleware's context scope).
         logger.error(
-            "Request failed | request_id=%s | %s: %s",
-            get_request_id(request), type(exc).__name__, exc, exc_info=exc,
+            "Request failed | %s: %s",
+            type(exc).__name__, exc, exc_info=exc,
         )
         # Log the outgoing error response too, so the request flow stays
         # symmetric (Request received → Request failed → Response sent).
@@ -136,9 +138,10 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def http_logging_handler(request: Request, exc: StarletteHTTPException) -> Response:
         log = logger.error if exc.status_code >= 500 else logger.warning
+        # request_id/correlation_id come from the log formatter's context prefix.
         log(
-            "Request failed | request_id=%s | %d %s",
-            get_request_id(request), exc.status_code, exc.detail, exc_info=exc,
+            "Request failed | %d %s",
+            exc.status_code, exc.detail, exc_info=exc,
         )
         response = await http_exception_handler(request, exc)  # keep the default shaping
         log_response(request, {"detail": exc.detail}, status_code=exc.status_code)
@@ -147,9 +150,10 @@ def create_app() -> FastAPI:
     # Request validation failure (422) → warning, with traceback.
     @app.exception_handler(RequestValidationError)
     async def validation_logging_handler(request: Request, exc: RequestValidationError) -> Response:
+        # request_id/correlation_id come from the log formatter's context prefix.
         logger.warning(
-            "Request failed | request_id=%s | 422 validation error | %s",
-            get_request_id(request), exc.errors(), exc_info=exc,
+            "Request failed | 422 validation error | %s",
+            exc.errors(), exc_info=exc,
         )
         response = await request_validation_exception_handler(request, exc)  # keep the default shaping
         log_response(request, {"detail": exc.errors()}, status_code=422)
@@ -158,9 +162,15 @@ def create_app() -> FastAPI:
     # Catch-all: turn unhandled errors into a clean 500, logged with traceback.
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        # This catch-all runs in Starlette's outermost ServerErrorMiddleware —
+        # OUTSIDE LoggingMiddleware, whose finally already reset the context vars.
+        # Re-publish the ids (still on request.state) so this log and the response
+        # get the same [correlation_id=… request_id=…] prefix as every other boundary.
+        correlation_id_var.set(get_correlation_id(request))
+        request_id_var.set(get_request_id(request))
         logger.error(
-            "Unhandled error | request_id=%s | %s: %s",
-            get_request_id(request), type(exc).__name__, exc, exc_info=exc,
+            "Unhandled error | %s: %s",
+            type(exc).__name__, exc, exc_info=exc,
         )
         return send_response(
             request,

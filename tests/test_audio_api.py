@@ -102,7 +102,7 @@ def test_speech_500_logged_once_with_request_id_and_traceback(api_client, monkey
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1  # logged once at the boundary, not also in the route
     record = errors[0]
-    assert request_id in record.getMessage()
+    assert record.request_id == request_id  # id is stamped on the record (drives the log prefix)
     assert record.exc_info is not None  # 5xx carries the traceback
     # the diagnosis-era per-route log line is gone
     assert not any("Speech synthesis failed" in r.getMessage() for r in caplog.records)
@@ -119,7 +119,7 @@ def test_speech_400_logged_once_as_warning_with_traceback(api_client, caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     record = warnings[0]
-    assert request_id in record.getMessage()
+    assert record.request_id == request_id  # id is stamped on the record (drives the log prefix)
     assert "400" in record.getMessage()
     assert record.exc_info is not None  # traceback attached
 
@@ -135,6 +135,6 @@ def test_validation_error_logged_once_with_request_id(api_client, caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     record = warnings[0]
-    assert request_id in record.getMessage()
+    assert record.request_id == request_id  # id is stamped on the record (drives the log prefix)
     assert "422" in record.getMessage()
     assert record.exc_info is not None  # traceback attached

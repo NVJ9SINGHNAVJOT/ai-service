@@ -25,7 +25,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from app.core.logging import get_logger
+from app.core.logging import correlation_id_var, get_logger, request_id_var
 
 logger = get_logger(__name__)
 
@@ -106,31 +106,40 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
 
-        body_log = await _extract_request_body(request)
+        # Publish the ids to context vars so every log emitted while handling this
+        # request — including the framework-free service layer's own INFO logs
+        # (e.g. "Model '…' loaded successfully.") — is tagged with them.
+        correlation_token = correlation_id_var.set(correlation_id)
+        request_token = request_id_var.set(request_id)
+        try:
+            body_log = await _extract_request_body(request)
 
-        logger.info(
-            "Request received\n%s",
-            _dumps({
-                "correlation_id": correlation_id,
-                "request_id": request_id,
-                "method": request.method,
-                "url": str(request.url),
-                "client_ip": request.client.host if request.client else "unknown",
-                "query_params": dict(request.query_params),
-                "headers": {
-                    "content-type": request.headers.get("content-type"),
-                    "origin": request.headers.get("origin"),
-                    "sec-fetch-site": request.headers.get("sec-fetch-site"),
-                    "sec-fetch-mode": request.headers.get("sec-fetch-mode"),
-                    "sec-ch-ua-platform": request.headers.get("sec-ch-ua-platform"),
-                },
-                "body": body_log,
-            }),
-        )
+            logger.info(
+                "Request received\n%s",
+                _dumps({
+                    "correlation_id": correlation_id,
+                    "request_id": request_id,
+                    "method": request.method,
+                    "url": str(request.url),
+                    "client_ip": request.client.host if request.client else "unknown",
+                    "query_params": dict(request.query_params),
+                    "headers": {
+                        "content-type": request.headers.get("content-type"),
+                        "origin": request.headers.get("origin"),
+                        "sec-fetch-site": request.headers.get("sec-fetch-site"),
+                        "sec-fetch-mode": request.headers.get("sec-fetch-mode"),
+                        "sec-ch-ua-platform": request.headers.get("sec-ch-ua-platform"),
+                    },
+                    "body": body_log,
+                }),
+            )
 
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            correlation_id_var.reset(correlation_token)
+            request_id_var.reset(request_token)
 
 
 async def _extract_request_body(request: Request) -> Any:
