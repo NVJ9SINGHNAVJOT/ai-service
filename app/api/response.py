@@ -50,8 +50,9 @@ def log_response(
 ) -> Any:
     """Log body as pretty JSON. Returns the JSON-encoded body.
 
-    Use directly for responses that aren't a JSONResponse (e.g. the accumulated
-    SSE body of a stream); send_response wraps this for plain JSON replies.
+    Use directly for responses that aren't a JSONResponse (e.g. a stream's
+    accumulated chunk payloads, passed as a list); send_response wraps this for
+    plain JSON replies.
     """
     request_id = get_request_id(request)
     correlation_id = get_correlation_id(request)
@@ -59,9 +60,8 @@ def log_response(
 
     envelope = {"correlation_id": correlation_id, "request_id": request_id, "status_code": status_code}
     if isinstance(serializable, str):
-        # Raw text body (e.g. the accumulated SSE stream) — print it below the
-        # envelope with real newlines instead of burying it as an escaped
-        # ("\n\n"-laden) JSON string, which is unreadable for a full stream.
+        # Raw text body — print it below the envelope with real newlines instead
+        # of burying it as an escaped ("\n"-laden) JSON string.
         logger.info("Response sent\n%s\n%s", _dumps(envelope), serializable)
     else:
         envelope["body"] = serializable

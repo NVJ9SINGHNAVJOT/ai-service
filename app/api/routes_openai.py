@@ -592,14 +592,19 @@ async def create_chat_completion(
 
     if body.stream:
         async def sse_stream():
-            # Accumulate every frame so the full SSE body can be logged once the
-            # stream ends (the `finally` also fires on early returns / disconnects,
-            # capturing partial streams).
-            frames: list[str] = []
+            # Accumulate each chunk's parsed payload (plus the terminal [DONE]
+            # marker) so the full stream can be logged as pretty JSON once it
+            # ends. The `finally` also fires on early returns / disconnects,
+            # capturing partial streams.
+            frames: list[dict | str] = []
 
-            def emit(frame: str) -> str:
-                frames.append(frame)
-                return frame
+            def emit_chunk(payload: dict) -> str:
+                frames.append(payload)
+                return _sse_chunk(payload)
+
+            def emit_done() -> str:
+                frames.append("[DONE]")
+                return "data: [DONE]\n\n"
 
             try:
                 initial_chunk = {
@@ -615,7 +620,7 @@ async def create_chat_completion(
                         }
                     ],
                 }
-                yield emit(_sse_chunk(initial_chunk))
+                yield emit_chunk(initial_chunk)
                 if await request.is_disconnected():
                     return
 
@@ -647,7 +652,7 @@ async def create_chat_completion(
                     }
                     if body.verbose and usage is not None:
                         payload["x_metrics"] = _build_verbose_metrics(usage, load_duration_s).model_dump()
-                    yield emit(_sse_chunk(payload))
+                    yield emit_chunk(payload)
                     if await request.is_disconnected():
                         return
 
@@ -666,15 +671,15 @@ async def create_chat_completion(
                             "total_tokens": int(final_usage.get("total_tokens", 0)),
                         },
                     }
-                    yield emit(_sse_chunk(usage_chunk))
+                    yield emit_chunk(usage_chunk)
 
-                yield emit("data: [DONE]\n\n")
+                yield emit_done()
             except InferenceError as exc:
                 error_payload = {"error": {"message": str(exc), "type": "server_error"}}
-                yield emit(_sse_chunk(error_payload))
-                yield emit("data: [DONE]\n\n")
+                yield emit_chunk(error_payload)
+                yield emit_done()
             finally:
-                log_response(request, "".join(frames))
+                log_response(request, frames)
 
         return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
