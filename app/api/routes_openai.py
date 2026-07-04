@@ -15,10 +15,11 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.api.response import log_response, send_response
+from app.api.response import get_request_id, log_response, send_response
 
 from app.config import settings
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
+from app.core.logging import get_logger
 from app.schemas.inference import (
     OpenAIChatCompletionChoice,
     OpenAIChatCompletionMessage,
@@ -31,6 +32,7 @@ from app.services.model_manager import ModelManager
 
 router = APIRouter(prefix="/v1", tags=["openai-compatible"])
 _manager = ModelManager()
+logger = get_logger(__name__)
 _IGNORED_CHAT_FIELDS = {
     "metadata",
     "store",
@@ -430,7 +432,17 @@ def _model_is_vlm(model_name: str) -> bool:
     try:
         info = _manager.get_model(model_name)
         return info.backend == "mlx-vlm"
-    except Exception:
+    except ModelNotFoundError:
+        # Unknown model — the loader raises the 404 (logged at the boundary)
+        # later; default to the text backend here without extra noise.
+        return False
+    except Exception as exc:
+        # A real lookup failure (e.g. registry read error) must not silently
+        # misroute to the text backend without leaving a trace.
+        logger.warning(
+            "Backend detection failed for '%s' (%s: %s); defaulting to text backend.",
+            model_name, type(exc).__name__, exc,
+        )
         return False
 
 
@@ -674,7 +686,16 @@ async def create_chat_completion(
                     yield emit_chunk(usage_chunk)
 
                 yield emit_done()
-            except InferenceError as exc:
+            except Exception as exc:
+                # The stream has already started, so the central exception
+                # handlers in app/main.py can no longer catch this — the SSE
+                # generator is its own boundary. Log once here (with traceback)
+                # so a mid-stream failure is never silent, then surface a clean
+                # error frame to the client.
+                logger.error(
+                    "Streaming chat completion failed | request_id=%s | %s: %s",
+                    get_request_id(request), type(exc).__name__, exc, exc_info=exc,
+                )
                 error_payload = {"error": {"message": str(exc), "type": "server_error"}}
                 yield emit_chunk(error_payload)
                 yield emit_done()

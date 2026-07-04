@@ -74,6 +74,7 @@ class ChatSession:
         try:
             self._svc.load(self.model_path, self.model_name)
         except ModelLoadError as exc:
+            logger.error("Failed to load model '%s'", self.model_name, exc_info=exc)
             console.print(f"[bold red]Failed to load model:[/bold red] {exc}")
             sys.exit(1)
 
@@ -112,6 +113,7 @@ class ChatSession:
             try:
                 response, usage, interrupted = self._stream_response()
             except InferenceError as exc:
+                logger.error("Inference failed during chat with '%s'", self.model_name, exc_info=exc)
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 # Remove the failed user message so the conversation stays clean
                 self._history.pop()

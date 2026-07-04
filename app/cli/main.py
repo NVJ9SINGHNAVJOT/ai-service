@@ -22,9 +22,10 @@ from rich.console import Console
 from rich.table import Table
 
 from app.config import settings
-from app.core.logging import setup_logging
+from app.core.logging import get_logger, setup_logging
 
 setup_logging()
+logger = get_logger(__name__)
 
 # ── Typer app tree ───────────────────────────────────────────────────────────
 
@@ -47,6 +48,11 @@ err_console = Console(stderr=True, style="bold red")
 # ── Helper ───────────────────────────────────────────────────────────────────
 
 def _abort(message: str, code: int = 1) -> None:
+    # Single CLI logging boundary: mirror the API's "log once at the boundary"
+    # rule for the terminal. Attach a traceback whenever we're handling an
+    # exception (the "how"); validation aborts with no active exception just log
+    # the message.
+    logger.error("CLI command failed: %s", message, exc_info=sys.exc_info()[0] is not None)
     err_console.print(f"[bold red]Error:[/bold red] {message}")
     raise typer.Exit(code=code)
 

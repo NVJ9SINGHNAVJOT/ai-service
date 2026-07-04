@@ -18,9 +18,11 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from app.core.exceptions import MediaChatError
+from app.core.logging import get_logger
 from app.patches import patch_gemma4_shared_kv_load
 from app.services.model_runtime_state import ModelRuntimeState
 
+logger = get_logger(__name__)
 console = Console()
 
 
@@ -174,6 +176,7 @@ class MediaChatSession:
             try:
                 response, usage = self._generate_response()
             except MediaChatError as exc:
+                logger.error("Media generation failed with '%s'", self.model_name, exc_info=exc)
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 self._history.pop()
                 continue
@@ -205,6 +208,7 @@ class MediaChatSession:
             try:
                 self._set_image(Path(arg))
             except MediaChatError as exc:
+                logger.warning("Failed to load image '%s': %s", arg, exc, exc_info=exc)
                 console.print(f"[bold red]Error:[/bold red] {exc}")
             return True
         if command == "/audio":
@@ -214,6 +218,7 @@ class MediaChatSession:
             try:
                 self._set_audio(Path(arg))
             except MediaChatError as exc:
+                logger.warning("Failed to load audio '%s': %s", arg, exc, exc_info=exc)
                 console.print(f"[bold red]Error:[/bold red] {exc}")
             return True
         if command == "/exit":
