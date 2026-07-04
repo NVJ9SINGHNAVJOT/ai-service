@@ -343,6 +343,13 @@ DEFAULT_TEMPERATURE=0.7
 DEFAULT_TOP_P=0.9
 DEFAULT_REPETITION_PENALTY=1.1
 
+# ── Swagger example models ───────────────────────────────────────
+# Model names pre-filled into the Swagger "Try it out" example bodies
+# (chat completions + model load/unload). Set these to models you have
+# locally so the examples are ready to send. Takes effect on restart.
+EXAMPLE_TEXT_MODEL=mlx-community__Meta-Llama-3.1-8B-Instruct-8bit
+EXAMPLE_MEDIA_MODEL=mlx-community__gemma-4-e4b-it-bf16
+
 # ── HuggingFace (required for gated/private models) ─────────────
 HF_TOKEN=hf_...
 

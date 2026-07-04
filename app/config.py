@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     default_top_p: float = 0.9
     default_repetition_penalty: float = 1.1
 
+    # ── Swagger / OpenAPI examples ──────────────────────────────────────────
+    # Model names pre-filled into the Swagger "Try it out" example bodies
+    # (chat completions + model load/unload). Set these once here (or in .env)
+    # to the models you have locally; the examples read from them at startup.
+    # Changing a value requires a server restart to take effect.
+    example_text_model: str = "mlx-community__Meta-Llama-3.1-8B-Instruct-8bit"
+    example_media_model: str = "mlx-community__gemma-4-e4b-it-bf16"
+
     # ── HuggingFace ─────────────────────────────────────────────────────────
     hf_token: Optional[str] = None
     # Cache for HuggingFace model weights (Whisper/Kokoro, etc.). Kept inside the

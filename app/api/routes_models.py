@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.response import send_response
 
+from app.config import settings
 from app.core.exceptions import (
     InvalidModelPathError,
     ModelLoadError,
@@ -44,12 +45,12 @@ _LOAD_MODEL_EXAMPLES = {
     "text_model": {
         "summary": "Load a text model",
         "description": "Loads a text model into the shared inference memory, swapping out any other loaded model.",
-        "value": {"name": "mlx-community__Llama-3.2-3B-Instruct-4bit"},
+        "value": {"name": settings.example_text_model},
     },
     "media_model": {
         "summary": "Load a multimodal model",
         "description": "Loads a vision/audio model used by image and audio chat completions.",
-        "value": {"name": "mlx-community__gemma-4-e4b-bf16"},
+        "value": {"name": settings.example_media_model},
     },
 }
 
@@ -62,7 +63,7 @@ _UNLOAD_MODEL_EXAMPLES = {
     "unload_named": {
         "summary": "Unload a specific model (guardrail)",
         "description": "Pass `name` to assert which model you expect to unload; a mismatch returns HTTP 400.",
-        "value": {"name": "mlx-community__Llama-3.2-3B-Instruct-4bit"},
+        "value": {"name": settings.example_text_model},
     },
     "unload_mismatch_400": {
         "summary": "Negative — name mismatch (400)",
@@ -176,7 +177,7 @@ async def load_model(
             "content": {
                 "application/json": {
                     "schema": _ERROR_RESPONSE_SCHEMA,
-                    "example": {"detail": "Model 'some-other-model' is not currently loaded ('mlx-community__Llama-3.2-3B-Instruct-4bit' is)."},
+                    "example": {"detail": f"Model 'some-other-model' is not currently loaded ('{settings.example_text_model}' is)."},
                 }
             },
         },

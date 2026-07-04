@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.response import log_response, send_response
 
+from app.config import settings
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
 from app.schemas.inference import (
     OpenAIChatCompletionChoice,
@@ -47,7 +48,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Text — basic completion",
         "description": "Basic text-only OpenAI-compatible chat completion.",
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [
                 {"role": "system", "content": "You are a concise assistant."},
                 {"role": "user", "content": "Say hello in one short sentence."},
@@ -63,7 +64,7 @@ _CHAT_COMPLETION_EXAMPLES = {
             "are accepted but ignored locally."
         ),
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [
                 {"role": "developer", "content": "You are terse and practical."},
                 {"role": "user", "content": "Reply with one line."},
@@ -82,7 +83,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Verbose — return x_metrics",
         "description": "Returns server-side timing metrics in `x_metrics` alongside the normal completion output.",
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [{"role": "user", "content": "Write a short haiku about coding."}],
             "verbose": True,
         },
@@ -91,7 +92,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Stop sequence",
         "description": "OpenAI-style `stop` support. The response text is trimmed before the stop sequence.",
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [
                 {"role": "user", "content": "Write a sentence that includes END and more text after it."}
             ],
@@ -105,7 +106,7 @@ _CHAT_COMPLETION_EXAMPLES = {
             "raw streamed body; frames are `data: {chunk}` lines terminated by `data: [DONE]`."
         ),
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [{"role": "user", "content": "Stream a short reply."}],
             "stream": True,
             "verbose": True,
@@ -115,7 +116,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Image + text (multimodal)",
         "description": "Image + text chat completion. Routed through mlx-vlm automatically because the message carries an image.",
         "value": {
-            "model": "mlx-community__gemma-4-e4b-bf16",
+            "model": settings.example_media_model,
             "messages": [
                 {
                     "role": "user",
@@ -138,7 +139,7 @@ _CHAT_COMPLETION_EXAMPLES = {
             "with your own base64 string before sending."
         ),
         "value": {
-            "model": "mlx-community__gemma-4-e4b-bf16",
+            "model": settings.example_media_model,
             "messages": [
                 {
                     "role": "user",
@@ -154,7 +155,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Image + text, streaming",
         "description": "Streaming multimodal image request (SSE).",
         "value": {
-            "model": "mlx-community__gemma-4-e4b-bf16",
+            "model": settings.example_media_model,
             "messages": [
                 {
                     "role": "user",
@@ -172,7 +173,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Negative — tools unsupported (400)",
         "description": "`tools` is not supported by this local endpoint yet and returns HTTP 400.",
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [{"role": "user", "content": "Call a tool for this."}],
             "tools": [{"type": "function", "function": {"name": "lookup_weather"}}],
         },
@@ -181,7 +182,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Negative — unknown extra field (400)",
         "description": "Unknown request fields are rejected with HTTP 400 instead of being silently ignored.",
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [{"role": "user", "content": "Hello"}],
             "totally_unknown_option": True,
         },
@@ -190,7 +191,7 @@ _CHAT_COMPLETION_EXAMPLES = {
         "summary": "Negative — n > 1 unsupported (400)",
         "description": "Only a single completion choice is supported; `n` > 1 returns HTTP 400.",
         "value": {
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "messages": [{"role": "user", "content": "Hello"}],
             "n": 2,
         },
@@ -213,7 +214,7 @@ CHAT_COMPLETION_200_EXAMPLES = {
             "id": "chatcmpl-abc123",
             "object": "chat.completion",
             "created": 1700000000,
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "choices": [
                 {
                     "index": 0,
@@ -231,7 +232,7 @@ CHAT_COMPLETION_200_EXAMPLES = {
             "id": "chatcmpl-abc456",
             "object": "chat.completion",
             "created": 1700000000,
-            "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+            "model": settings.example_text_model,
             "choices": [
                 {
                     "index": 0,
@@ -272,7 +273,7 @@ _CHAT_COMPLETION_RESPONSES = {
         "content": {
             "application/json": {
                 "schema": _ERROR_RESPONSE_SCHEMA,
-                "example": {"detail": "Model not found: 'mlx-community__Llama-3.2-3B-Instruct-4bit'"},
+                "example": {"detail": f"Model not found: '{settings.example_text_model}'"},
             }
         },
     },
