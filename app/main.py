@@ -26,7 +26,7 @@ from app.core.logging import get_logger, setup_logging
 from app.services.audio import AudioService
 from app.services.inference import InferenceService
 from app.services.media_inference import MediaInferenceService
-from app.api.response import get_request_id
+from app.api.response import get_request_id, log_response, send_response
 
 setup_logging()
 logger = get_logger(__name__)
@@ -124,9 +124,12 @@ def create_app() -> FastAPI:
             "Request failed | request_id=%s | %s: %s",
             get_request_id(request), type(exc).__name__, exc, exc_info=exc,
         )
-        return JSONResponse(
+        # Log the outgoing error response too, so the request flow stays
+        # symmetric (Request received → Request failed → Response sent).
+        return send_response(
+            request,
+            {"success": False, "message": str(exc), "data": None},
             status_code=500,
-            content={"success": False, "message": str(exc), "data": None},
         )
 
     # Any HTTPException raised by a route — 5xx at error, 4xx at warning; both with traceback.
@@ -137,7 +140,9 @@ def create_app() -> FastAPI:
             "Request failed | request_id=%s | %d %s",
             get_request_id(request), exc.status_code, exc.detail, exc_info=exc,
         )
-        return await http_exception_handler(request, exc)  # keep the default shaping
+        response = await http_exception_handler(request, exc)  # keep the default shaping
+        log_response(request, {"detail": exc.detail}, status_code=exc.status_code)
+        return response
 
     # Request validation failure (422) → warning, with traceback.
     @app.exception_handler(RequestValidationError)
@@ -146,7 +151,9 @@ def create_app() -> FastAPI:
             "Request failed | request_id=%s | 422 validation error | %s",
             get_request_id(request), exc.errors(), exc_info=exc,
         )
-        return await request_validation_exception_handler(request, exc)  # keep the default shaping
+        response = await request_validation_exception_handler(request, exc)  # keep the default shaping
+        log_response(request, {"detail": exc.errors()}, status_code=422)
+        return response
 
     # Catch-all: turn unhandled errors into a clean 500, logged with traceback.
     @app.exception_handler(Exception)
@@ -155,9 +162,10 @@ def create_app() -> FastAPI:
             "Unhandled error | request_id=%s | %s: %s",
             get_request_id(request), type(exc).__name__, exc, exc_info=exc,
         )
-        return JSONResponse(
+        return send_response(
+            request,
+            {"success": False, "message": "internal error", "data": None},
             status_code=500,
-            content={"success": False, "message": "internal error", "data": None},
         )
 
     # Register routers
