@@ -9,10 +9,12 @@ Design decisions
   their own resident handles instead of competing for the single large-model
   slot owned by InferenceService / MediaInferenceService.
 
-- Both models load lazily on first use and are then cached for the process
-  lifetime. `mlx_whisper.transcribe()` caches the loaded model internally keyed
-  by repo, so STT needs no handle here; the Kokoro TTS model is loaded once and
-  held under a lock.
+- Both models load lazily on first use. `mlx_whisper.transcribe()` caches the
+  loaded model internally keyed by repo, so STT needs no handle here and stays
+  resident for the process lifetime. The Kokoro TTS model is loaded once and held
+  under a lock; because we own that handle, it is dropped after
+  ``tts_idle_timeout_seconds`` of inactivity (re-arming timer) to reclaim memory,
+  then reloaded lazily on the next request.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ class AudioService:
         self._lock = threading.Lock()
         self._tts_model = None
         self._tts_model_name: Optional[str] = None
+        self._tts_idle_timer: Optional[threading.Timer] = None
 
     # ── Speech-to-Text ───────────────────────────────────────────────────────
 
@@ -115,6 +118,36 @@ class AudioService:
                 self._tts_model_name = None
                 raise InferenceError(f"TTS model load failed: {exc}") from exc
 
+    def _cancel_idle_timer(self) -> None:
+        """Stop any pending idle-unload timer (called while a request is active)."""
+        if self._tts_idle_timer is not None:
+            self._tts_idle_timer.cancel()
+            self._tts_idle_timer = None
+
+    def _arm_idle_timer(self) -> None:
+        """(Re)start the idle-unload countdown after a completed synthesis."""
+        timeout = self._cfg.tts_idle_timeout_seconds
+        if timeout <= 0:  # disabled → keep resident for the process lifetime
+            return
+        self._cancel_idle_timer()
+        self._tts_idle_timer = threading.Timer(timeout, self._unload_tts_if_idle)
+        self._tts_idle_timer.daemon = True
+        self._tts_idle_timer.start()
+
+    def _unload_tts_if_idle(self) -> None:
+        """Drop the resident TTS model after the idle timeout elapses."""
+        with self._lock:
+            if self._tts_model is None:
+                return
+            logger.info(
+                "Unloading idle TTS model '%s' after %.0fs.",
+                self._tts_model_name,
+                self._cfg.tts_idle_timeout_seconds,
+            )
+            self._tts_model = None
+            self._tts_model_name = None
+            self._tts_idle_timer = None
+
     def synthesize(
         self,
         text: str,
@@ -133,6 +166,9 @@ class AudioService:
         if not text or not text.strip():
             raise InferenceError("input text is empty.")
 
+        # Pause the idle-unload countdown so an in-flight request can't have the
+        # model dropped out from under it; re-arm once synthesis completes.
+        self._cancel_idle_timer()
         self._ensure_tts_loaded()
 
         try:
@@ -155,3 +191,5 @@ class AudioService:
         except Exception as exc:
             logger.exception("TTS synthesis failed for text of length %d", len(text))
             raise InferenceError(f"speech synthesis failed: {exc}") from exc
+        finally:
+            self._arm_idle_timer()

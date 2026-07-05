@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     tts_model: str = "prince-canuma/Kokoro-82M"
     tts_voice: str = "af_heart"
     tts_lang_code: str = "a"  # Kokoro: 'a' = American English, 'b' = British
+    # Unload the resident TTS model after this many idle seconds to reclaim
+    # memory; it reloads lazily on the next request. 0 keeps it resident for the
+    # process lifetime.
+    tts_idle_timeout_seconds: float = 60.0
 
     # ── Resolved paths (computed properties) ───────────────────────────────
 

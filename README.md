@@ -150,7 +150,7 @@ This is where the main business logic lives.
 - `base.py` defines `LoadedModelService`, the abstract base that owns the shared model lifecycle (lock, loaded-model state, load timing, runtime marker, and generation kwargs). Both inference services extend it so the OpenAI route can treat either backend through one interface
 - `inference.py` loads a text model with `mlx-lm` and performs generate/chat calls
 - `media_inference.py` loads a multimodal model with `mlx-vlm` for image/audio chat completions
-- `audio.py` runs local speech-to-text (Whisper via `mlx-whisper`) and text-to-speech (Kokoro via `mlx-audio`); both load lazily and stay resident alongside the chat model
+- `audio.py` runs local speech-to-text (Whisper via `mlx-whisper`) and text-to-speech (Kokoro via `mlx-audio`); both load lazily alongside the chat model — STT stays resident, while TTS unloads after `TTS_IDLE_TIMEOUT_SECONDS` of inactivity and reloads on the next request
 - `model_runtime_state.py` persists tiny marker files so `downloading` / `running` states are visible across processes
 
 The interactive terminal chat loops (`chat_session.py`, `media_chat_session.py`)
@@ -358,6 +358,7 @@ STT_MODEL=mlx-community/whisper-large-v3-turbo
 TTS_MODEL=prince-canuma/Kokoro-82M
 TTS_VOICE=af_heart
 TTS_LANG_CODE=a
+TTS_IDLE_TIMEOUT_SECONDS=60   # unload the TTS model after N idle seconds (0 = keep resident)
 
 # ── Model cache (where HF weights download; default: project-local) ──
 HF_CACHE_DIR=models/hf-cache
