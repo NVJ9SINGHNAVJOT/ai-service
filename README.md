@@ -254,18 +254,18 @@ These are models you place manually into:
 
 Custom models are listed by scanning that folder. They are not tied to a registry entry in the same way downloaded models are.
 
-## Why Model Names Look Like `mlx-community__Llama-3.2-3B-Instruct-4bit`
+## Why Model Names Look Like `mlx-community__Meta-Llama-3.1-8B-Instruct-8bit`
 
 Hugging Face repo IDs often contain `/`, for example:
 
 ```text
-mlx-community/Llama-3.2-3B-Instruct-4bit
+mlx-community/Meta-Llama-3.1-8B-Instruct-8bit
 ```
 
 That is converted into a filesystem-safe local name:
 
 ```text
-mlx-community__Llama-3.2-3B-Instruct-4bit
+mlx-community__Meta-Llama-3.1-8B-Instruct-8bit
 ```
 
 This matters because:
@@ -347,8 +347,8 @@ DEFAULT_REPETITION_PENALTY=1.1
 # Model names pre-filled into the Swagger "Try it out" example bodies
 # (chat completions + model load/unload). Set these to models you have
 # locally so the examples are ready to send. Takes effect on restart.
-EXAMPLE_TEXT_MODEL=mlx-community__Meta-Llama-3.1-8B-Instruct-8bit
-EXAMPLE_MEDIA_MODEL=mlx-community__gemma-4-e4b-it-bf16
+EXAMPLE_TEXT_MODEL=org__your-text-model
+EXAMPLE_MEDIA_MODEL=org__your-media-model
 
 # ── HuggingFace (required for gated/private models) ─────────────
 HF_TOKEN=hf_...
@@ -374,14 +374,14 @@ task model:list
 ### Download a model
 
 ```bash
-task model:download MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
+task model:download MODEL=org/your-text-model
 ```
 
 ### Diagnose models
 
 ```bash
 task model:doctor
-task model:doctor MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
+task model:doctor MODEL=org__your-text-model
 ```
 
 `model:doctor` is useful when a model appears in the list but still fails to
@@ -410,7 +410,7 @@ task cli -- --verbose --temperature 0.5
 ### Start CLI chat
 
 ```bash
-task model:chat MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
+task model:chat MODEL=org__your-text-model
 ```
 
 During generation, press `Ctrl+C` to stop only the current reply. The session
@@ -419,7 +419,7 @@ stays open so you can keep chatting.
 ### Run media chat
 
 ```bash
-task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16 IMAGE=/path/to/image.jpg
+task model:chat-media MODEL=org__your-media-model IMAGE=/path/to/image.jpg
 ```
 
 This starts an interactive multimodal chat session. You can preload an image or
@@ -431,7 +431,7 @@ You can also start without initial media and load it later from inside the
 session:
 
 ```bash
-task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16
+task model:chat-media MODEL=org__your-media-model
 ```
 
 You can preload audio too:
@@ -504,12 +504,12 @@ model. Anything after `--` is forwarded to the chat session as flags.
 ```bash
 task model:list
 task model:doctor
-task model:download MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
-task model:update MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
-task model:delete MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit FORCE=true
-task model:chat MODEL=mlx-community__Llama-3.2-3B-Instruct-4bit
-task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16 IMAGE=/path/to/image.jpg
-task model:chat-media MODEL=mlx-community__gemma-4-e4b-bf16
+task model:download MODEL=org/your-text-model
+task model:update MODEL=org__your-text-model
+task model:delete MODEL=org__your-text-model FORCE=true
+task model:chat MODEL=org__your-text-model
+task model:chat-media MODEL=org__your-media-model IMAGE=/path/to/image.jpg
+task model:chat-media MODEL=org__your-media-model
 ```
 
 ### Speech models (STT / TTS)
@@ -553,14 +553,14 @@ python -m app.cli.main models list
 ### Download a model
 
 ```bash
-python -m app.cli.main models download --repo mlx-community/Llama-3.2-3B-Instruct-4bit
+python -m app.cli.main models download --repo org/your-text-model
 ```
 
 ### Diagnose models
 
 ```bash
 python -m app.cli.main models doctor
-python -m app.cli.main models doctor --name mlx-community__Llama-3.2-3B-Instruct-4bit
+python -m app.cli.main models doctor --name org__your-text-model
 ```
 
 The doctor output also shows a color-coded `Inputs` hint so you can quickly
@@ -569,13 +569,13 @@ see whether a model looks text-only or multimodal.
 ### Update a model
 
 ```bash
-python -m app.cli.main models update --name mlx-community__Llama-3.2-3B-Instruct-4bit
+python -m app.cli.main models update --name org__your-text-model
 ```
 
 ### Delete a model
 
 ```bash
-python -m app.cli.main models delete --name mlx-community__Llama-3.2-3B-Instruct-4bit --force
+python -m app.cli.main models delete --name org__your-text-model --force
 ```
 
 ### Prepare speech models
@@ -600,21 +600,21 @@ then starts a chat. It accepts the same optional chat flags as `chat`
 ### Chat with a model
 
 ```bash
-python -m app.cli.main chat --model mlx-community__Llama-3.2-3B-Instruct-4bit
+python -m app.cli.main chat --model org__your-text-model
 ```
 
 ### Chat with image or audio
 
 ```bash
 python -m app.cli.main chat-media \
-  --model mlx-community__gemma-4-e4b-bf16 \
+  --model org__your-media-model \
   --image /path/to/image.jpg
 ```
 
 Or start first and load media later with `/image` or `/audio`:
 
 ```bash
-python -m app.cli.main chat-media --model mlx-community__gemma-4-e4b-bf16
+python -m app.cli.main chat-media --model org__your-media-model
 ```
 
 ```bash
@@ -627,7 +627,7 @@ Optional chat settings:
 
 ```bash
 python -m app.cli.main chat \
-  --model mlx-community__Llama-3.2-3B-Instruct-4bit \
+  --model org__your-text-model \
   --system "You are a helpful coding assistant." \
   --max-tokens 512 \
   --temperature 0.7 \
@@ -728,7 +728,7 @@ curl http://127.0.0.1:8000/api/v1/models
 curl -X POST http://127.0.0.1:8000/api/v1/models/load \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "mlx-community__Llama-3.2-3B-Instruct-4bit"
+    "name": "org__your-text-model"
   }'
 ```
 
@@ -803,7 +803,7 @@ Example:
 
 ```json
 {
-  "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+  "model": "org__your-text-model",
   "messages": [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "My name is Navjot."},
@@ -839,7 +839,7 @@ Example image request:
 
 ```json
 {
-  "model": "mlx-community__gemma-4-e4b-bf16",
+  "model": "org__your-media-model",
   "messages": [
     {
       "role": "user",
@@ -872,7 +872,7 @@ This means you can point OpenAI-compatible SDKs at your local server by changing
 Use your local model name as the `model` value:
 
 ```text
-mlx-community__Llama-3.2-3B-Instruct-4bit
+org__your-text-model
 ```
 
 Current compatibility rules for `/v1/chat/completions`:
@@ -905,7 +905,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="mlx-community__Llama-3.2-3B-Instruct-4bit",
+    model="org__your-text-model",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Say hello in one short sentence."},
@@ -926,7 +926,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="mlx-community__gemma-4-e4b-bf16",
+    model="org__your-media-model",
     messages=[
         {
             "role": "user",
@@ -952,7 +952,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "mlx-community__Llama-3.2-3B-Instruct-4bit",
+  model: "org__your-text-model",
   messages: [
     { role: "system", content: "You are a helpful assistant." },
     { role: "user", content: "Say hello in one short sentence." }
@@ -977,7 +977,7 @@ curl -N http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-key" \
   -d '{
-    "model": "mlx-community__Llama-3.2-3B-Instruct-4bit",
+    "model": "org__your-text-model",
     "messages": [
       {"role": "user", "content": "Write a short haiku about coding."}
     ],
