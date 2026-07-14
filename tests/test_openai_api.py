@@ -4,8 +4,14 @@ Automated tests for API endpoints and OpenAI-compatible request handling.
 
 from __future__ import annotations
 
+import base64
+
 from fastapi.testclient import TestClient
 import pytest
+
+# Inline media, as the OpenAI SDK sends it: the HTTP endpoint accepts nothing else.
+INLINE_IMAGE_DATA_URI = "data:image/jpeg;base64," + base64.b64encode(b"fake-jpeg-bytes").decode()
+INLINE_AUDIO_BASE64 = base64.b64encode(b"fake-wav-bytes").decode()
 
 
 def test_health_endpoint(api_client):
@@ -737,7 +743,7 @@ def test_openai_chat_completions_endpoint_accepts_multimodal_messages(api_client
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "Describe this image"},
-                        {"type": "image_url", "image_url": {"url": "/tmp/example.jpg"}},
+                        {"type": "image_url", "image_url": {"url": INLINE_IMAGE_DATA_URI}},
                     ],
                 }
             ],
@@ -813,7 +819,7 @@ def test_openai_chat_completions_streaming_accepts_input_image_parts(api_client,
             "model": "my-vision-model",
             "stream": True,
             "verbose": True,
-            "messages": [{"role": "user", "content": [{"type": "input_text", "text": "What do you see?"}, {"type": "input_image", "image_url": "/tmp/example.jpg"}]}],
+            "messages": [{"role": "user", "content": [{"type": "input_text", "text": "What do you see?"}, {"type": "input_image", "image_url": INLINE_IMAGE_DATA_URI}]}],
         },
     ) as resp:
         body = "".join(resp.iter_text())
@@ -872,7 +878,7 @@ def test_openai_chat_completions_endpoint_accepts_input_audio_parts(api_client, 
                     "role": "user",
                     "content": [
                         {"type": "input_text", "text": "Transcribe this clip"},
-                        {"type": "input_audio", "input_audio": {"data": "base64-audio-data", "format": "wav"}},
+                        {"type": "input_audio", "input_audio": {"data": INLINE_AUDIO_BASE64, "format": "wav"}},
                     ],
                 }
             ],
@@ -883,6 +889,214 @@ def test_openai_chat_completions_endpoint_accepts_input_audio_parts(api_client, 
     body = resp.json()
     assert body["choices"][0]["message"]["content"] == "Audio response"
     assert body["usage"]["total_tokens"] == 6
+
+
+def _image_request(url: str) -> dict:
+    return {
+        "model": "my-vision-model",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/absolute/path/to/image.jpg",
+        "data:application/octet-stream;base64," + base64.b64encode(b"not-an-image").decode(),
+        "data:image/png,not-base64-at-all",
+    ],
+)
+def test_openai_chat_completions_rejects_invalid_image_inputs(api_client, url):
+    """Filesystem paths and non-image data URIs are not valid OpenAI image forms — 400."""
+    resp = api_client.post("/v1/chat/completions", json=_image_request(url))
+
+    assert resp.status_code == 400
+    assert "image_url.url" in resp.json()["detail"]
+
+
+def test_openai_chat_completions_accepts_https_image_url(api_client, monkeypatch):
+    """An http(s):// image URL is valid OpenAI and mlx-vlm fetches it — the guard must let it through."""
+    from app.api import routes_openai
+    from app.main import inference_service, media_inference_service
+    from app.schemas.model import ModelInfo, ModelSource
+    from app.services.media_inference import MediaInferenceService
+
+    monkeypatch.setattr(
+        routes_openai._manager,
+        "ensure_model_files_ready",
+        lambda name: ModelInfo(
+            name=name,
+            repo_id=None,
+            source=ModelSource.custom,
+            path="/tmp/fake-vision-model",
+            loadable=True,
+            size_mb=None,
+            created_at=None,
+            updated_at=None,
+        ),
+    )
+    monkeypatch.setattr(inference_service, "unload", lambda: None)
+    monkeypatch.setattr(media_inference_service, "load", lambda model_path, model_name: None)
+    monkeypatch.setattr(MediaInferenceService, "loaded_model_name", property(lambda self: None))
+    monkeypatch.setattr(
+        media_inference_service,
+        "chat",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("Remote image response", {}),
+    )
+
+    resp = api_client.post("/v1/chat/completions", json=_image_request("https://example.com/photo.jpg"))
+
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "Remote image response"
+
+
+@pytest.mark.parametrize(
+    ("content_part", "field"),
+    [
+        ({"type": "image_url", "image_url": {"url": ""}}, "image_url.url"),
+        ({"type": "image_url", "image_url": {"url": "   "}}, "image_url.url"),
+        ({"type": "image_url", "image_url": {}}, "image_url.url"),
+        ({"type": "image_url", "image_url": {"url": None}}, "image_url.url"),
+        ({"type": "input_image", "image_url": ""}, "input_image.image_url"),
+        ({"type": "input_audio", "input_audio": {"data": "", "format": "wav"}}, "input_audio.data"),
+        ({"type": "input_audio", "input_audio": {"format": "wav"}}, "input_audio.data"),
+    ],
+)
+def test_openai_chat_completions_rejects_empty_media_values(api_client, content_part, field):
+    """An empty/missing media value must be a 400, not silently dropped into a text-only answer.
+
+    ChatMessage.image_inputs()/audio_inputs() filter these parts out, so without an
+    explicit check the request would quietly route to the text backend.
+    """
+    resp = api_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "my-vision-model",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "Describe this"}, content_part]}],
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == f"{field} must be a non-empty string."
+
+
+def test_openai_chat_completions_rejects_corrupt_image_base64_without_echoing_payload(api_client, caplog):
+    """A valid data:image/ prefix with a corrupt body must 400 without leaking the payload into body or logs."""
+    corrupt_payload = "!!!not-base64!!!" * 64
+
+    with caplog.at_level("DEBUG"):
+        resp = api_client.post("/v1/chat/completions", json=_image_request(f"data:image/png;base64,{corrupt_payload}"))
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "image_url.url" in detail
+    assert "!!!" not in detail
+    assert "!!!" not in caplog.text
+
+
+def test_openai_chat_completions_rejects_empty_image_base64(api_client):
+    """A data URI that decodes to zero bytes is not a usable image."""
+    resp = api_client.post("/v1/chat/completions", json=_image_request("data:image/png;base64,"))
+
+    assert resp.status_code == 400
+    assert "image_url.url" in resp.json()["detail"]
+
+
+def test_openai_chat_completions_rejects_invalid_audio_base64(api_client):
+    """A non-base64 input_audio.data is a client error (400), not a backend failure (500)."""
+    resp = api_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "my-audio-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Transcribe this clip"},
+                        {"type": "input_audio", "input_audio": {"data": "!!! not base64 !!!", "format": "wav"}},
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "input_audio.data" in resp.json()["detail"]
+
+
+def test_openai_chat_completions_accepts_audio_data_uri(api_client, monkeypatch):
+    """A data:audio/...;base64, URI is still accepted alongside bare base64."""
+    from app.api import routes_openai
+    from app.main import inference_service, media_inference_service
+    from app.schemas.model import ModelInfo, ModelSource
+    from app.services.media_inference import MediaInferenceService
+
+    monkeypatch.setattr(
+        routes_openai._manager,
+        "ensure_model_files_ready",
+        lambda name: ModelInfo(
+            name=name,
+            repo_id=None,
+            source=ModelSource.custom,
+            path="/tmp/fake-audio-model",
+            loadable=True,
+            input_modalities=["text", "audio"],
+            size_mb=None,
+            created_at=None,
+            updated_at=None,
+        ),
+    )
+    monkeypatch.setattr(inference_service, "unload", lambda: None)
+    monkeypatch.setattr(media_inference_service, "load", lambda model_path, model_name: None)
+    monkeypatch.setattr(MediaInferenceService, "loaded_model_name", property(lambda self: None))
+    monkeypatch.setattr(
+        media_inference_service,
+        "chat",
+        lambda messages, max_tokens=None, temperature=None, top_p=None, repetition_penalty=None: ("Audio response", {}),
+    )
+
+    resp = api_client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "my-audio-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Transcribe this clip"},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": f"data:audio/wav;base64,{INLINE_AUDIO_BASE64}", "format": "wav"},
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "Audio response"
+
+
+def test_media_backend_error_message_is_truncated():
+    """A backend failure carrying a huge source string must not become a huge error message."""
+    from app.services.media_inference import _truncate_backend_error
+
+    huge = "Failed to load image from data:image/png;base64," + "A" * 5000
+    truncated = _truncate_backend_error(huge)
+
+    assert len(truncated) < 600
+    assert truncated.startswith("Failed to load image from")
+    assert "truncated" in truncated
+    assert _truncate_backend_error("short message") == "short message"
 
 
 @pytest.mark.anyio

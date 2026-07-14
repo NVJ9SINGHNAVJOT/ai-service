@@ -28,6 +28,17 @@ from app.services.base import LoadedModelService, openai_role_for_template
 
 logger = get_logger(__name__)
 
+# mlx-vlm errors embed the whole media source string (e.g. an entire base64 data
+# URI) in their message, which would otherwise land in the HTTP body and the logs.
+_MAX_BACKEND_ERROR_CHARS = 500
+
+
+def _truncate_backend_error(message: str) -> str:
+    """Cap a backend error message so it can never carry a large media payload."""
+    if len(message) <= _MAX_BACKEND_ERROR_CHARS:
+        return message
+    return f"{message[:_MAX_BACKEND_ERROR_CHARS]}… (truncated, {len(message)} chars)"
+
 
 def _strip_audio_data_uri(data: str) -> str:
     """Accept a bare base64 string or a ``data:audio/...;base64,<payload>`` URI."""
@@ -229,7 +240,7 @@ class MediaInferenceService(LoadedModelService):
                             }
                         yield text, usage
                 except Exception as exc:
-                    raise InferenceError(str(exc)) from exc
+                    raise InferenceError(_truncate_backend_error(str(exc))) from exc
 
     @staticmethod
     def _prepare_messages(messages: List[ChatMessage]) -> List[dict]:

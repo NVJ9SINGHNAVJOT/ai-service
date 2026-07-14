@@ -7,10 +7,13 @@ Currently supported:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import time
 import uuid
 from pathlib import Path
+from typing import Any, Generator
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -21,6 +24,7 @@ from app.config import settings
 from app.core.exceptions import InferenceError, InvalidModelPathError, ModelLoadError, ModelNotFoundError, UnsupportedModelError
 from app.core.logging import get_logger
 from app.schemas.inference import (
+    ChatMessage,
     OpenAIChatCompletionChoice,
     OpenAIChatCompletionMessage,
     OpenAIChatCompletionRequest,
@@ -28,6 +32,7 @@ from app.schemas.inference import (
     OpenAIResponseMetrics,
     OpenAIUsage,
 )
+from app.services.media_inference import _strip_audio_data_uri
 from app.services.model_manager import ModelManager
 
 router = APIRouter(prefix="/v1", tags=["openai-compatible"])
@@ -42,9 +47,9 @@ _IGNORED_CHAT_FIELDS = {
     "stream_options",
 }
 
-# Request scenarios surfaced in Swagger UI. Replace the placeholder model names and
-# image path with values that exist on your machine, and the audio data with real
-# base64-encoded audio bytes, before sending.
+# Request scenarios surfaced in Swagger UI. Replace the placeholder model names with
+# values that exist on your machine, and the image/audio placeholders with real
+# base64-encoded media bytes, before sending.
 _CHAT_COMPLETION_EXAMPLES = {
     "text": {
         "summary": "Text — basic completion",
@@ -116,7 +121,14 @@ _CHAT_COMPLETION_EXAMPLES = {
     },
     "image": {
         "summary": "Image + text (multimodal)",
-        "description": "Image + text chat completion. Routed through mlx-vlm automatically because the message carries an image.",
+        "description": (
+            "Image + text chat completion. Routed through mlx-vlm automatically because the "
+            "message carries an image. `image_url.url` takes a **base64 data URI** of the form "
+            "`data:<mime>;base64,<bytes>` — as shown below, produced by e.g. "
+            "`'data:image/jpeg;base64,' + base64.b64encode(open('photo.jpg', 'rb').read()).decode()` "
+            "— **or** an `http(s)://` URL. It is **not** a filesystem path. Replace the placeholder "
+            "below with your own base64 string before sending."
+        ),
         "value": {
             "model": settings.example_media_model,
             "messages": [
@@ -124,7 +136,7 @@ _CHAT_COMPLETION_EXAMPLES = {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "Describe this image in detail."},
-                        {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,<base64-encoded-image-bytes>"}},
                     ],
                 }
             ],
@@ -155,7 +167,12 @@ _CHAT_COMPLETION_EXAMPLES = {
     },
     "image_streaming": {
         "summary": "Image + text, streaming",
-        "description": "Streaming multimodal image request (SSE).",
+        "description": (
+            "Streaming multimodal image request (SSE). Same image contract as the non-streaming "
+            "example: `image_url.url` takes a **base64 data URI** (`data:<mime>;base64,<bytes>`, "
+            "as shown below) **or** an `http(s)://` URL — never a filesystem path. Replace the "
+            "placeholder below with your own base64 string before sending."
+        ),
         "value": {
             "model": settings.example_media_model,
             "messages": [
@@ -163,7 +180,7 @@ _CHAT_COMPLETION_EXAMPLES = {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "What do you see here?"},
-                        {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,<base64-encoded-image-bytes>"}},
                     ],
                 }
             ],
@@ -261,7 +278,8 @@ _CHAT_COMPLETION_RESPONSES = {
     400: {
         "description": (
             "Validation error — an unsupported or malformed field was sent "
-            "(e.g. `tools`, `n` > 1, an unknown field, or an invalid `stop`)."
+            "(e.g. `tools`, `n` > 1, an unknown field, an invalid `stop`, or a media input "
+            "that is not a valid OpenAI form — such as a filesystem path)."
         ),
         "content": {
             "application/json": {
@@ -422,6 +440,88 @@ def _reject_unsupported_chat_features(body: OpenAIChatCompletionRequest) -> None
             )
 
 
+def _decode_inline_base64(payload: str, detail: str) -> None:
+    """Validate that `payload` is non-empty base64, raising 400 with `detail` if not.
+
+    `detail` describes the expected shape only — it never carries the payload, so a
+    multi-megabyte body can't be echoed into the response or the logs.
+    """
+    try:
+        raw = base64.b64decode("".join(payload.split()), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=detail) from exc
+    if not raw:
+        raise HTTPException(status_code=400, detail=detail)
+
+
+def _iter_media_parts(message: ChatMessage) -> Generator[tuple[str, str, Any], None, None]:
+    """Yield ``(kind, field, value)`` for every media content part, as sent.
+
+    Deliberately reads the raw content parts rather than ``image_inputs()`` /
+    ``audio_inputs()``: those accessors drop parts whose value is empty, so an
+    empty url or data would never reach validation — it would be silently ignored
+    and the request would answer from the remaining text alone.
+    """
+    if not isinstance(message.content, list):
+        return
+
+    for item in message.content:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = item.get("type")
+        if item_type == "image_url":
+            payload = item.get("image_url")
+            yield "image", "image_url.url", payload.get("url") if isinstance(payload, dict) else payload
+        elif item_type == "input_image":
+            yield "image", "input_image.image_url", item.get("image_url")
+        elif item_type == "input_audio":
+            payload = item.get("input_audio")
+            yield "audio", "input_audio.data", payload.get("data") if isinstance(payload, dict) else None
+
+
+def _reject_unsupported_media_inputs(body: OpenAIChatCompletionRequest) -> None:
+    """Reject media forms that are not valid OpenAI — notably filesystem paths.
+
+    Images may be a base64 data URI or an `http(s)://` URL (both are valid OpenAI,
+    and mlx-vlm handles either); audio is base64 only, since the Chat Completions
+    `input_audio` part has no URL form. Failing here keeps a bad payload from
+    reaching mlx-vlm, whose errors embed the entire source string.
+
+    The CLI is unaffected: it talks to the services directly and keeps its file paths.
+    """
+    for message in body.messages:
+        for kind, field, value in _iter_media_parts(message):
+            if not isinstance(value, str) or not value.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field} must be a non-empty string.",
+                )
+
+            if kind == "audio":
+                _decode_inline_base64(
+                    _strip_audio_data_uri(value),
+                    f"{field} must be base64-encoded audio bytes (as the OpenAI SDK sends).",
+                )
+                continue
+
+            if value.startswith(("http://", "https://")):
+                continue
+            if not value.startswith("data:image/") or ";base64," not in value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{field} must be a base64 data URI of the form "
+                        "'data:image/<subtype>;base64,<bytes>' or an http(s):// URL. "
+                        "Filesystem paths are not supported."
+                    ),
+                )
+            _decode_inline_base64(
+                value.split(";base64,", 1)[1],
+                f"{field} must carry valid, non-empty base64-encoded image bytes.",
+            )
+
+
 def _request_uses_vlm(messages) -> bool:
     """Return True when any chat message includes image or audio content."""
     return any(message.has_image() or message.has_audio() for message in messages)
@@ -574,6 +674,11 @@ async def create_chat_completion(
     mlx-lm. The requested `model` is auto-loaded (swapping out any other loaded
     model) before generation.
 
+    Media follows the OpenAI contract: `image_url.url` is a base64 data URI
+    (`data:image/<subtype>;base64,<bytes>`) or an `http(s)://` URL, and
+    `input_audio.data` is base64 bytes (audio has no URL form). Filesystem paths
+    return 400.
+
     Use the **Examples** dropdown above to try each scenario, including the
     negative cases that return HTTP 400.
 
@@ -581,6 +686,7 @@ async def create_chat_completion(
     - Usage fields are estimated until tokenizer-based accounting is added.
     """
     _reject_unsupported_chat_features(body)
+    _reject_unsupported_media_inputs(body)
     stop_sequences = _normalize_stop_sequences(body.stop)
 
     uses_vlm = _request_uses_vlm(body.messages) or _model_is_vlm(body.model)

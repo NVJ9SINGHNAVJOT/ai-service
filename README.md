@@ -831,10 +831,20 @@ The API currently supports:
 - `{"type": "input_image", "image_url": "..."}`
 - `{"type": "input_audio", "input_audio": {"data": "...", "format": "wav"}}`
 
-For `input_audio`, `data` must be **base64-encoded audio bytes** (exactly what the
-OpenAI SDK sends), not a file path. `format` is the source type such as `wav` or
-`mp3`. The server decodes the base64 to a temporary file before handing it to
-`mlx-vlm`.
+Media follows the OpenAI contract, and the two parts are **not** symmetric. A
+**filesystem path is never valid** over HTTP and returns a `400`. (The `chat-media` CLI
+is separate and still takes file paths.)
+
+For `image_url`, `url` is **either** a **base64 data URI** of the form
+`data:<mime>;base64,<bytes>` — e.g.
+`"data:image/jpeg;base64," + base64.b64encode(open("photo.jpg", "rb").read()).decode()` —
+**or** an `http(s)://` URL, which the server fetches. A `data:` URI whose MIME type is not
+`image/*`, or whose base64 does not decode, returns a `400`.
+
+For `input_audio`, `data` must be **base64-encoded audio bytes** (exactly what the OpenAI
+SDK sends — the `input_audio` part has no URL form; a `data:audio/...;base64,` URI is also
+accepted). `format` is the source type such as `wav` or `mp3`. The server decodes the
+base64 to a temporary file before handing it to `mlx-vlm`.
 
 Example image request:
 
@@ -846,7 +856,7 @@ Example image request:
       "role": "user",
       "content": [
         {"type": "text", "text": "Describe this image in detail."},
-        {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}}
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,<base64-encoded-image-bytes>"}}
       ]
     }
   ]
@@ -880,7 +890,7 @@ Current compatibility rules for `/v1/chat/completions`:
 
 - implemented: `model`, `messages`, `developer` / `system` / `user` / `assistant` roles, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `repetition_penalty`, `stream`, `stop`, `n=1`, text/image/audio user inputs
 - accepted and ignored: `store`, `metadata`, `service_tier`, `seed`, `safety_identifier`, `stream_options`, `user`
-- rejected with `400`: `tools`, `tool_choice`, `parallel_tool_calls`, `function_call`, `prediction`, audio output config via `audio` or non-text `modalities`, `logprobs`, `top_logprobs`, non-zero `frequency_penalty`, non-zero `presence_penalty`, unknown extra fields
+- rejected with `400`: `tools`, `tool_choice`, `parallel_tool_calls`, `function_call`, `prediction`, audio output config via `audio` or non-text `modalities`, `logprobs`, `top_logprobs`, non-zero `frequency_penalty`, non-zero `presence_penalty`, unknown extra fields, media inputs that are not a valid OpenAI form (filesystem paths, non-`image/*` data URIs, undecodable base64, empty or missing `url` / `data` values)
 
 This keeps the endpoint friendly to common OpenAI SDK request shapes while
 still failing clearly for advanced features that are not implemented here yet.
@@ -919,12 +929,17 @@ print(response.choices[0].message.content)
 ### OpenAI Python Image Example
 
 ```python
+import base64
+
 from openai import OpenAI
 
 client = OpenAI(
     api_key="test-key",
     base_url="http://127.0.0.1:8000/v1",
 )
+
+with open("photo.jpg", "rb") as handle:
+    image_data_uri = "data:image/jpeg;base64," + base64.b64encode(handle.read()).decode()
 
 response = client.chat.completions.create(
     model="org__your-media-model",
@@ -933,7 +948,7 @@ response = client.chat.completions.create(
             "role": "user",
             "content": [
                 {"type": "text", "text": "What is in this image?"},
-                {"type": "image_url", "image_url": {"url": "/absolute/path/to/image.jpg"}},
+                {"type": "image_url", "image_url": {"url": image_data_uri}},
             ],
         }
     ],
