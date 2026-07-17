@@ -30,6 +30,7 @@ models/runtime/
 
 # Agents
 .claude/
+plans/
 
 # IDE
 .idea/
