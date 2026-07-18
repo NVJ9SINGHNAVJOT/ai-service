@@ -119,7 +119,11 @@ tests/
 
 ## Architecture Overview
 
-The codebase is split into a few clear layers.
+The codebase is split into a few clear layers. For the deeper reference — the
+rules, the full directory map, and the runtime flows — see the [`docs/`](docs/)
+folder: start at [docs/rules.md](docs/rules.md), then
+[docs/system-design.md](docs/system-design.md) (structure & why) and
+[docs/project-flow.md](docs/project-flow.md) (what happens at runtime).
 
 ### `app/config.py`
 
