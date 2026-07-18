@@ -70,37 +70,11 @@ The project uses `mlx-lm`, which is built for Apple's MLX stack and is intended 
 
 ## Project Layout
 
-```text
-app/
-├── api/                          # HTTP delivery layer (FastAPI/Starlette only)
-│   ├── routes_health.py          #   GET  /health
-│   ├── routes_models.py          #   GET/POST /api/v1/models[...]
-│   ├── routes_openai.py          #   POST /v1/chat/completions
-│   ├── routes_audio.py           #   POST /v1/audio/transcriptions, /v1/audio/speech
-│   ├── middleware.py             #   LoggingMiddleware (request-id / correlation-id / body summary)
-│   └── response.py               #   send_response / log_response / get_request_id helpers
-├── cli/                          # Terminal delivery layer (Typer/Rich only)
-│   ├── main.py                   #   Typer CLI: models / audio / chat / chat-media / cli / serve
-│   ├── select.py                 #   Zero-dep arrow-key picker used by the interactive `cli` command
-│   ├── chat_session.py           #   Interactive terminal text chat
-│   └── media_chat_session.py     #   Interactive terminal image/audio chat
-├── core/
-│   ├── exceptions.py             # Domain exception hierarchy
-│   └── logging.py                # Logging setup
-├── schemas/
-│   ├── inference.py              # Chat + OpenAI request/response models
-│   ├── model.py                  # Model-management payloads
-│   └── audio.py                  # STT / TTS request/response models
-├── services/                     # Pure shared business logic (no HTTP, no terminal)
-│   ├── base.py                   #   LoadedModelService ABC (shared lifecycle)
-│   ├── inference.py              #   Text inference (mlx-lm)
-│   ├── media_inference.py        #   Multimodal inference (mlx-vlm)
-│   ├── audio.py                  #   Speech-to-text (mlx-whisper) + text-to-speech (mlx-audio)
-│   ├── model_manager.py          #   Download / list / update / delete / registry
-│   └── model_runtime_state.py    #   Cross-process "downloading"/"running" markers
-├── config.py                     # Settings (env / .env) and resolved paths
-└── main.py                       # App factory, CORS, routers, shared singletons
+The `app/` package holds the code; `models/` holds weights and runtime state. For
+the annotated `app/` package map — and the reasoning behind the layout — see
+[docs/system-design.md](docs/system-design.md).
 
+```text
 models/
 ├── downloaded/                   # Chat models fetched from Hugging Face
 ├── custom/                       # Manually placed model folders
@@ -119,72 +93,13 @@ tests/
 
 ## Architecture Overview
 
-The codebase is split into a few clear layers. For the deeper reference — the
-rules, the full directory map, and the runtime flows — see the [`docs/`](docs/)
-folder: start at [docs/rules.md](docs/rules.md), then
+One shared, framework-free service core (`app/services/`) sits behind two delivery
+layers — the FastAPI server (`app/api/`, HTTP-only) and the Typer CLI (`app/cli/`,
+terminal-only) — and both call the same services. For the full breakdown — every
+component, the cross-cutting invariants, and the runtime flows — see the
+[`docs/`](docs/) folder: start at [docs/rules.md](docs/rules.md), then
 [docs/system-design.md](docs/system-design.md) (structure & why) and
 [docs/project-flow.md](docs/project-flow.md) (what happens at runtime).
-
-### `app/config.py`
-
-Loads settings from environment variables or `.env`, and resolves paths.
-
-### `app/core/*`
-
-Shared project utilities:
-
-- `exceptions.py` defines project-specific exceptions
-- `logging.py` sets up application logging
-
-### `app/schemas/*`
-
-Pydantic models for request and response validation.
-
-These define the shapes of:
-
-- model-management payloads
-- inference requests
-- OpenAI-compatible request and response bodies
-
-### `app/services/*`
-
-This is where the main business logic lives.
-
-- `model_manager.py` handles downloading, registry updates, listing, updating, and deleting models
-- `base.py` defines `LoadedModelService`, the abstract base that owns the shared model lifecycle (lock, loaded-model state, load timing, runtime marker, and generation kwargs). Both inference services extend it so the OpenAI route can treat either backend through one interface
-- `inference.py` loads a text model with `mlx-lm` and performs generate/chat calls
-- `media_inference.py` loads a multimodal model with `mlx-vlm` for image/audio chat completions
-- `audio.py` runs local speech-to-text (Whisper via `mlx-whisper`) and text-to-speech (Kokoro via `mlx-audio`); both load lazily alongside the chat model — STT stays resident, while TTS unloads after `TTS_IDLE_TIMEOUT_SECONDS` of inactivity and reloads on the next request
-- `model_runtime_state.py` persists tiny marker files so `downloading` / `running` states are visible across processes
-
-The interactive terminal chat loops (`chat_session.py`, `media_chat_session.py`)
-live under `app/cli/`, not here — they are CLI-only and are covered below.
-
-### `app/api/*`
-
-The HTTP delivery layer. Route files (`routes_*.py`) are intentionally thin and mostly:
-
-- validate request bodies
-- call service methods
-- convert exceptions into HTTP responses
-
-This layer also holds the HTTP-only cross-cutting helpers: `middleware.py`
-(request logging + request/correlation ids) and `response.py` (response
-envelope + logging helpers). They live here rather than in a top-level package
-because they only ever run inside the FastAPI server.
-
-### `app/cli/*`
-
-Typer-based command-line interface for people who want to manage models or chat
-directly from terminal. Alongside `main.py` and the `select.py` picker, this is
-where the interactive chat loops live (`chat_session.py`, `media_chat_session.py`)
-since they are terminal-only.
-
-### `app/main.py`
-
-Creates the FastAPI app, configures CORS, registers routes, and creates the shared
-`inference_service` (text / mlx-lm), `media_inference_service` (multimodal / mlx-vlm),
-and `audio_service` (STT/TTS) singletons that the routes reuse across requests.
 
 ## How Model Storage Works
 
