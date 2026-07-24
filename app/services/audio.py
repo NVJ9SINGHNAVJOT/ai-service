@@ -189,7 +189,6 @@ class AudioService:
         except InferenceError:
             raise
         except Exception as exc:
-            logger.exception("TTS synthesis failed for text of length %d", len(text))
             raise InferenceError(f"speech synthesis failed: {exc}") from exc
         finally:
             self._arm_idle_timer()

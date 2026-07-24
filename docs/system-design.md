@@ -187,4 +187,4 @@ chat-completion 200 examples that FastAPI's `exclude_none` would otherwise strip
 `tests/` uses `pytest` with fakes — no real model downloads. Tests import services
 directly (e.g. `from app.services.inference import InferenceService`) and drive
 routes via FastAPI `TestClient`. Manual real-model steps live in
-[TESTING.md](../TESTING.md).
+[TESTING.md](TESTING.md).

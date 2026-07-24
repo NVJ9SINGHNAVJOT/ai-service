@@ -74,6 +74,7 @@ def _style_for_input_kind(kind: str) -> str:
         "text": "green",
         "image": "bold cyan",
         "audio": "magenta",
+        "video": "blue",
     }.get(kind, "white")
 
 

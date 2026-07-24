@@ -306,7 +306,7 @@ task model:doctor MODEL=org__your-text-model
 
 `model:doctor` is useful when a model appears in the list but still fails to
 load. It reports the model's `model_type`, mapped MLX backend, current state,
-estimated input modes such as `text`, `image`, and `audio`, missing files,
+estimated input modes (`text`, `image`, `audio`, `video`), missing files,
 whether the installed `mlx_lm` appears to support it, and a short
 recommendation.
 
@@ -448,7 +448,7 @@ automatically as its final step.
 task test
 ```
 
-Manual local-model verification steps live in [TESTING.md](/Users/navjot/Desktop/GitRepos/ai-service/TESTING.md).
+Manual local-model verification steps live in [docs/TESTING.md](docs/TESTING.md).
 
 ### Cleanup
 
@@ -703,6 +703,19 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
   -d '{"input":"Hello from Kokoro.","voice":"af_heart"}' \
   --output reply.wav
 ```
+
+### Speech request fields
+
+`POST /v1/audio/speech` accepts these JSON fields (extra OpenAI fields such as
+`instructions` are accepted and ignored):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `input` | — (required) | The text to synthesize. |
+| `voice` | server default (`af_heart`) | Kokoro voice id. |
+| `speed` | `1.0` | Playback speed multiplier, `0.25`–`4.0`. |
+| `response_format` | `wav` | Output container. Only `wav` is supported; any other value returns `400`. |
+| `model` | — | Accepted for OpenAI compatibility; the TTS model is fixed server-side. |
 
 ### Dependencies & notes
 
@@ -999,16 +1012,22 @@ The currently loaded API model stays in memory until one of these happens:
 
 ## Error Handling
 
-The code uses project-specific exceptions such as:
+The code uses project-specific exceptions, all subclassing `MLXManagerError`
+(defined in `app/core/exceptions.py`):
 
-- `ModelNotFoundError`
-- `ModelLoadError`
-- `InferenceError`
-- `DownloadError`
-- `RegistryError`
-- `InvalidModelPathError`
+- `ModelNotFoundError` — the named model does not exist locally
+- `ModelAlreadyExistsError` — download target already exists (without `--force`)
+- `InvalidModelPathError` — a path fails a security/validity check
+- `ModelLoadError` — the model could not be loaded into memory
+- `InferenceError` — a generation/transcription/synthesis call failed
+- `DownloadError` — a HuggingFace download failed
+- `RegistryError` — a registry read/write failed
+- `ModelBusyError` — the model is `running`/`downloading`, so update/delete is blocked
+- `UnsupportedModelError` — the installed MLX runtime does not support the architecture
+- `MediaChatError` — a media chat session could not start or failed
 
-Routes catch these and convert them into HTTP responses with appropriate status codes.
+Services raise these; the delivery layers translate them — `app/api/` into HTTP
+responses with appropriate status codes, `app/cli/` into printed errors.
 
 ## Security Notes
 
@@ -1043,7 +1062,7 @@ python3 -m pytest tests/ -v
 ```
 
 For real local-model verification with `model:doctor`, verbose text chat, and
-image chat using `./tmp/testing.jpg`, see [TESTING.md](/Users/navjot/Desktop/GitRepos/ai-service/TESTING.md).
+image chat using `./tmp/testing.jpg`, see [docs/TESTING.md](docs/TESTING.md).
 
 ## Learning Guide for This Codebase
 

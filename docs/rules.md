@@ -15,6 +15,7 @@ here rather than keeping a separate copy.
   model lifecycle, logging, and a "where to make common changes" table):
   [project-flow.md](project-flow.md)
 - **Adding your own models** — [custom-models.md](custom-models.md)
+- **Manual model verification** — [TESTING.md](TESTING.md)
 
 ## The core rule
 
