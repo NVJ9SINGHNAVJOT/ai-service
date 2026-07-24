@@ -64,15 +64,17 @@ tasks:
     cmds:
       - "{{.PYTHON}} -m app.cli.main serve --host {{.HOST}} --port {{.PORT}}"
 
-  run:cli:
-    desc: "Show CLI help"
-    cmds:
-      - "{{.PYTHON}} -m app.cli.main --help"
+  # ── CLI ──────────────────────────────────────────────────────────────────
 
   cli:
     desc: "Interactive model picker, then chat. Pass flags after --, e.g. task cli -- --verbose --temperature 0.5"
     cmds:
       - "{{.PYTHON}} -m app.cli.main cli {{.CLI_ARGS}}"
+
+  cli:help:
+    desc: "Show the underlying CLI's commands and flags"
+    cmds:
+      - "{{.PYTHON}} -m app.cli.main --help"
 
   # ── Model management ─────────────────────────────────────────────────────
 

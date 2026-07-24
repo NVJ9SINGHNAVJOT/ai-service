@@ -403,12 +403,6 @@ You can override host and port:
 task run:api API_HOST=127.0.0.1 API_PORT=9000
 ```
 
-### Run the CLI help
-
-```bash
-task run:cli
-```
-
 ### Interactive CLI
 
 ```bash
@@ -418,6 +412,12 @@ task cli -- --verbose --temperature 0.5
 
 Launches the arrow-key model picker, then starts a chat with the selected
 model. Anything after `--` is forwarded to the chat session as flags.
+
+To see every command and flag the underlying CLI accepts:
+
+```bash
+task cli:help
+```
 
 ### Model management
 
