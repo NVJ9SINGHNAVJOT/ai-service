@@ -199,8 +199,8 @@ one boundary, so a failure is never logged twice and never lost:
 | Task | Start here |
 |------|-----------|
 | Change/added an HTTP route | `app/api/routes_*.py` |
-| Change OpenAI request acceptance rules | `_reject_unsupported_chat_features` in `routes_openai.py` |
-| Change what media input forms the HTTP API accepts (data URI / URL / base64) | `_reject_unsupported_media_inputs` in `routes_openai.py` |
+| Change OpenAI request acceptance rules | `_reject_unsupported_chat_features` in `routes_openai.py` — then update [openai-compatibility.md](openai-compatibility.md) |
+| Change what media input forms the HTTP API accepts (data URI / URL / base64) | `_reject_unsupported_media_inputs` in `routes_openai.py` — then update [openai-compatibility.md](openai-compatibility.md) |
 | Change how backend is chosen | `_request_uses_vlm` / `_model_is_vlm` in `routes_openai.py` |
 | Change model load/unload behavior | `app/services/base.py` + backend subclass |
 | Change text generation / prompt format | `app/services/inference.py` |

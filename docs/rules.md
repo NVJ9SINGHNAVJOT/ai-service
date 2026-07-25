@@ -17,6 +17,12 @@ here rather than keeping a separate copy.
 - **Adding your own models** — [custom-models.md](custom-models.md)
 - **Manual model verification** — [TESTING.md](TESTING.md)
 
+Read on demand (only when the task touches that area):
+
+- **OpenAI request contract** — which `/v1/chat/completions` fields are honored,
+  ignored, or rejected, and the media-input rules:
+  [openai-compatibility.md](openai-compatibility.md)
+
 ## The core rule
 
 One shared, framework-free service core, two delivery mechanisms:

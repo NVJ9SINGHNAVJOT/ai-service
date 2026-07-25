@@ -602,6 +602,11 @@ content in OpenAI-style multimodal message parts are routed through `mlx-vlm`
 automatically. Speech transcription and synthesis run through `mlx-whisper` and
 `mlx-audio`.
 
+For the exact `/v1/chat/completions` request contract — which OpenAI fields are
+honored, which are accepted but ignored, which return `400`, and what image/audio
+input forms are allowed — see
+[docs/openai-compatibility.md](docs/openai-compatibility.md).
+
 ## API Endpoints
 
 | Method | Path | Description |
