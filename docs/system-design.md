@@ -1,190 +1,247 @@
 # System Design
 
-Architecture reference for the AI Service. Read this to understand *how the code
-is organized and why*; read [project-flow.md](project-flow.md) to understand
-*what happens at runtime*.
+Diagrams only. For the written breakdown — directory map, naming conventions, and
+what each component does — see [structure.md](structure.md).
 
-## Core idea: one shared service core, two delivery mechanisms
+## Layers
 
-This is a local MLX inference app for Apple Silicon. The single most important
-structural fact:
+Two delivery mechanisms over one framework-free service core.
 
-```
-                 ┌─────────────┐     ┌─────────────┐
-   HTTP client → │  app/api/   │     │  app/cli/   │ ← terminal user
-                 │ (FastAPI)   │     │  (Typer)    │
-                 └──────┬──────┘     └──────┬──────┘
-                        │                   │
-                        └─────────┬─────────┘
-                                  ▼
-                          ┌───────────────┐
-                          │ app/services/ │  pure business logic
-                          │  (framework-  │  (no HTTP, no terminal)
-                          │   agnostic)   │
-                          └───────┬───────┘
-                                  ▼
-                   mlx-lm · mlx-vlm · mlx-whisper · mlx-audio
-```
+```mermaid
+flowchart TD
+    client["HTTP client"]
+    user["Terminal user"]
 
-`app/services/` is the shared core. It must not import FastAPI, Starlette, Typer,
-or Rich. Anything HTTP-only lives under `app/api/`; anything terminal-only lives
-under `app/cli/`. Both delivery layers call the *same* service objects.
+    subgraph delivery["Delivery layers"]
+        direction LR
+        api["app/api/<br/>FastAPI · Starlette<br/><i>HTTP-only</i>"]
+        cli["app/cli/<br/>Typer · Rich<br/><i>terminal-only</i>"]
+    end
 
-## Directory layout
+    subgraph core["Shared core"]
+        services["app/services/<br/>pure business logic<br/><b>must not import</b><br/>FastAPI · Starlette · Typer · Rich"]
+    end
 
-```
-app/
-├── config.py            # Settings (env/.env) + resolved paths; module singleton `settings`
-├── main.py              # FastAPI app factory; owns the shared service singletons
-│
-├── core/                # shared primitives (no framework deps)
-│   ├── exceptions.py    #   MLXManagerError hierarchy (ModelNotFoundError, ...)
-│   └── logging.py       #   logging setup + get_logger
-│
-├── schemas/             # pydantic request/response contracts (shared)
-│   ├── inference.py     #   chat + OpenAI-compatible bodies, Role enum
-│   ├── model.py         #   model-management payloads
-│   └── audio.py         #   STT/TTS bodies
-│
-├── services/            # PURE shared business logic — the core
-│   ├── base.py              #   LoadedModelService ABC (shared model lifecycle)
-│   ├── inference.py         #   InferenceService — text, mlx-lm
-│   ├── media_inference.py   #   MediaInferenceService — multimodal, mlx-vlm
-│   ├── audio.py             #   AudioService — STT (mlx-whisper) + TTS (mlx-audio)
-│   ├── model_manager.py     #   ModelManager — download/list/update/delete/registry/doctor
-│   └── model_runtime_state.py #  ModelRuntimeState — cross-process marker files
-│
-├── api/                 # HTTP delivery layer (FastAPI/Starlette only)
-│   ├── routes_health.py     #   GET  /health
-│   ├── routes_models.py     #   /api/v1/models[...]
-│   ├── routes_openai.py     #   POST /v1/chat/completions (backend selection lives here)
-│   ├── routes_audio.py      #   POST /v1/audio/transcriptions, /v1/audio/speech
-│   ├── middleware.py        #   LoggingMiddleware (request-id, correlation-id, body sanitizing)
-│   └── response.py          #   send_response / log_response / get_request_id helpers
-│
-├── cli/                 # terminal delivery layer (Typer/Rich only)
-│   ├── main.py              #   Typer app: models / audio / chat / chat-media / cli / serve
-│   ├── select.py            #   zero-dep arrow-key model picker
-│   ├── chat_session.py      #   ChatSession — interactive text loop (uses InferenceService)
-│   └── media_chat_session.py #  MediaChatSession — interactive image/audio loop
-│
-└── patches/             # runtime monkeypatches for upstream MLX bugs (see PATCHES.md)
-    ├── mlx_audio_kokoro.py
-    └── mlx_vlm_gemma4.py
+    subgraph shared["Shared primitives"]
+        direction LR
+        schemas["app/schemas/<br/>pydantic contracts"]
+        corepkg["app/core/<br/>exceptions · logging"]
+        config["app/config.py<br/>Settings singleton"]
+    end
+
+    subgraph backends["MLX backends"]
+        direction LR
+        mlxlm["mlx-lm<br/>text"]
+        mlxvlm["mlx-vlm<br/>multimodal"]
+        whisper["mlx-whisper<br/>STT"]
+        audio["mlx-audio<br/>TTS"]
+    end
+
+    disk[("models/<br/>weights · registry.json · runtime markers")]
+
+    client --> api
+    user --> cli
+    api --> services
+    cli --> services
+    services --> mlxlm
+    services --> mlxvlm
+    services --> whisper
+    services --> audio
+    services --> disk
+    delivery -.-> shared
+    core -.-> shared
 ```
 
-### Naming conventions
-- Files inside `services/` are **not** suffixed with `_service` — the folder
-  already says "service", so `inference.py` not `inference_service.py`. This
-  matches `schemas/` and `core/`, which don't suffix either.
-- `routes_*.py` stay flat inside `api/` (no `api/routes/` subpackage).
-- Class names still carry role suffixes where it aids readability
-  (`InferenceService`, `ModelManager`, `ChatSession`).
+## Module dependency graph
 
-### Why middleware and response.py live under `api/`
-They are HTTP-only. `LoggingMiddleware` is a Starlette `BaseHTTPMiddleware` and
-runs only inside FastAPI; `response.py` builds HTTP response envelopes and reads
-request state. Neither has any meaning for the CLI, so they belong to the API
-delivery layer — not a top-level `middleware/` or `utils/` package.
+Who imports whom inside `app/`. Every module also imports from
+`app/config.py` + `app/core/` (and most from `app/schemas/`); those edges are
+aggregated as the dotted lines at the bottom to keep the graph readable.
 
-## Key components
+```mermaid
+flowchart TB
+    appmain["app/main.py<br/>app factory + service singletons"]
 
-### `config.py` — `Settings`
-Pydantic-settings singleton (`settings`), loaded from env/`.env`. String path
-fields map cleanly to env vars; resolved absolute `Path` objects are exposed via
-`*_path` properties. `ensure_directories()` creates the models layout. On import
-it also sets `HF_HUB_CACHE` to the project-local cache so HF downloads stay in
-`models/hf-cache/` instead of `~/.cache/huggingface`. `example_text_model` /
-`example_media_model` supply the model names pre-filled into the Swagger
-"Try it out" example bodies (read at import by `routes_openai.py` /
-`routes_models.py`), so they change everywhere from one env var.
+    subgraph api["app/api/ — HTTP delivery"]
+        direction TB
+        ro["routes_openai.py"]
+        rm["routes_models.py"]
+        ra["routes_audio.py"]
+        rh["routes_health.py"]
+        mw["middleware.py"]
+        resp["response.py"]
+    end
 
-### `services/base.py` — `LoadedModelService` (ABC)
-The heart of the inference design. Owns the **backend-agnostic** lifecycle shared
-by both inference backends:
-- a reentrant lock guarding load/unload,
-- the loaded-model name, the in-memory model handle, last load duration,
-- the cross-process "running" marker (via `ModelRuntimeState`),
-- `_generation_kwargs(...)` building MLX sampler/logits args from request +
-  config defaults.
+    subgraph cli["app/cli/ — terminal delivery"]
+        direction TB
+        cmain["main.py<br/>Typer commands"]
+        sel["select.py"]
+        cs["chat_session.py<br/>ChatSession"]
+        mcs["media_chat_session.py<br/>MediaChatSession"]
+    end
 
-Subclasses implement the abstract hooks `load`, `chat`, `chat_stream`, and
-`_release_backend` (Template Method). Because both subclasses share this
-interface, `routes_openai.py` can treat either backend through one substitutable
-handle (Liskov) — it just picks the right service and calls the same methods.
+    subgraph services["app/services/ — shared core"]
+        direction TB
+        inf["inference.py<br/>InferenceService"]
+        minf["media_inference.py<br/>MediaInferenceService"]
+        base["base.py<br/>LoadedModelService (ABC)"]
+        aud["audio.py<br/>AudioService"]
+        mm["model_manager.py<br/>ModelManager"]
+        mrs["model_runtime_state.py<br/>ModelRuntimeState"]
+    end
 
-**Concurrency invariant:** the lock protects load/unload only. Concurrent
-`generate` calls on one loaded model are *not* safe (MLX isn't thread-safe at the
-C level). A multi-user server would need a request queue — see Extension points.
+    subgraph patches["app/patches/"]
+        direction TB
+        pk["mlx_audio_kokoro.py"]
+        pv["mlx_vlm_gemma4.py"]
+    end
 
-### `services/inference.py` — `InferenceService`
-Text backend (`mlx-lm`). Loads a model, formats messages via the tokenizer chat
-template (falls back to a plain-text format), and runs `generate` /
-`stream_generate`. Also handles chat-template stop markers and stop-sequence
-splitting.
+    subgraph shared["app/config.py · app/core/ · app/schemas/"]
+        direction LR
+        cfg["config.py<br/>Settings"]
+        exc["core/exceptions.py"]
+        log["core/logging.py"]
+        sch["schemas/"]
+    end
 
-### `services/media_inference.py` — `MediaInferenceService`
-Multimodal backend (`mlx-vlm`). Same interface as `InferenceService`, but decodes
-image/audio content parts (including base64 `input_audio` → temp file) before
-generation.
+    appmain --> ro & rm & ra & rh
+    appmain --> mw
+    appmain --> inf & minf & aud
 
-### `services/audio.py` — `AudioService`
-Local STT (Whisper via `mlx-whisper`) and TTS (Kokoro via `mlx-audio`). Both load
-lazily on first use alongside the chat model. STT's handle lives inside
-`mlx_whisper` (we don't own it) so it stays resident for the process lifetime; the
-Kokoro TTS handle *is* ours, so a re-arming idle timer unloads it after
-`tts_idle_timeout_seconds` of inactivity (0 = keep resident) and it reloads on the
-next request. Independent of the chat backends.
+    ro --> resp
+    rm --> resp
+    ra --> resp
+    rh --> resp
+    ro --> mm
+    rm --> mm
+    ro -. "_strip_audio_data_uri" .-> minf
 
-### `services/model_manager.py` — `ModelManager`
-Everything about models *on disk*: download (`snapshot_download`), list, update,
-delete, registry (`models/registry.json`) read/write, and the `doctor`
-diagnostics (backend detection, `model_type` → MLX support, input-modality
-inference, missing-file checks). Stateless w.r.t. loaded models — it reasons about
-files, not memory.
+    ro -. "deferred import<br/>of the singletons" .-> appmain
+    rm -. " " .-> appmain
+    ra -. " " .-> appmain
+    rh -. " " .-> appmain
 
-### `services/model_runtime_state.py` — `ModelRuntimeState`
-Tiny marker files under `models/runtime/` that make `downloading` / `running`
-states visible **across processes** (e.g. a CLI chat and the API server are
-separate processes and don't share memory). Also does PID-liveness checks so a
-crashed process doesn't leave a stale `running` marker.
+    cmain --> sel & cs & mcs
+    cmain --> mm
+    cs --> inf
+    mcs --> mrs
+    mcs --> pv
 
-### `main.py` — app factory + singletons
-Creates the three shared service singletons at module load:
-`inference_service`, `media_inference_service`, `audio_service`. Wires CORS →
-`LoggingMiddleware` → exception handlers (which log once at the boundary,
-correlated by `request_id`) → routers. Also patches `app.openapi()` to inject the
-chat-completion 200 examples that FastAPI's `exclude_none` would otherwise strip.
+    inf --> base
+    minf --> base
+    minf --> pv
+    aud --> pk
+    base --> mrs
+    mm --> mrs
 
-## Cross-cutting invariants
-- **One model at a time per backend.** Loading a new model unloads the current
-  one. The text and media backends are also mutually exclusive: entering one path
-  unloads the other (limited unified memory).
-- **Model names are sanitized.** HF repo ids like `mlx-community/Llama-...` become
-  filesystem-safe `mlx-community__Llama-...`; the registry maps the sanitized name
-  back to the repo id. The API uses the sanitized name as the identifier.
-- **Services never raise HTTP.** They raise domain exceptions from
-  `core/exceptions.py`; `api/` translates those to status codes, `cli/` prints
-  them.
-- **Errors are logged once, at the boundary.** Each entry point has one logging
-  boundary: for the API it's the exception handlers in `main.py`, keyed by
-  `request_id`; for the CLI it's `_abort()` in `cli/main.py` (plus the terminal
-  `except` blocks in the chat sessions). The SSE streaming path is its own
-  boundary — once the response has started the `main.py` handlers can no longer
-  catch it, so its generator logs failures in-route (see `routes_openai.py`).
-  Every boundary logs with a traceback (`exc_info`). Keep this the *only* place
-  each failure is logged — don't add error logs inside `services/` or you'll
-  double-log the API path.
+    api -.-> shared
+    cli -.-> shared
+    services -.-> shared
+    patches -.-> log
+```
 
-## Extension points (from README "Recommended Next Improvements")
-- API-key auth → add as FastAPI dependency/middleware in `api/`.
-- Request queue for safe concurrent inference → wrap `LoadedModelService` in
-  `services/`.
-- OpenAI `/v1/models`, embeddings → new `routes_*.py` + service method.
-- Persistent conversation storage → new service + schema.
+`MediaChatSession` is deliberately **not** wired to `MediaInferenceService`: it
+imports `mlx_vlm` directly via `importlib` and manages its own runtime marker.
+Only the HTTP path uses `MediaInferenceService`.
 
-## Testing
-`tests/` uses `pytest` with fakes — no real model downloads. Tests import services
-directly (e.g. `from app.services.inference import InferenceService`) and drive
-routes via FastAPI `TestClient`. Manual real-model steps live in
-[TESTING.md](TESTING.md).
+## Request flow — `POST /v1/chat/completions`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant M as LoggingMiddleware
+    participant R as routes_openai.py
+    participant T as InferenceService<br/>(mlx-lm)
+    participant V as MediaInferenceService<br/>(mlx-vlm)
+    participant H as Exception handlers<br/>(app/main.py)
+
+    C->>M: POST /v1/chat/completions
+    M->>M: set correlation_id + request_id<br/>log request (media summarized)
+    M->>R: forward
+
+    R->>R: parse OpenAIChatCompletionRequest
+    R->>R: _reject_unsupported_chat_features() → 400
+    R->>R: _reject_unsupported_media_inputs() → 400
+
+    alt _request_uses_vlm(messages) or _model_is_vlm(model)
+        R->>T: unload (one model at a time)
+        R->>V: _ensure_media_model_loaded()
+        V-->>R: loaded handle
+    else text request
+        R->>V: unload (one model at a time)
+        R->>T: _ensure_model_loaded()
+        T-->>R: loaded handle
+    end
+
+    Note over T,V: Generation below goes to whichever backend was selected<br/>above — both expose the same LoadedModelService interface
+
+    alt stream = false
+        R->>T: chat()
+        T-->>R: (text, usage)
+        R->>R: _split_at_stop_sequence()
+        R-->>C: OpenAIChatCompletionResponse<br/>(+ x_metrics if verbose)
+    else stream = true
+        R->>T: chat_stream()
+        loop per token
+            T-->>R: delta
+            R-->>C: data: {chunk}
+        end
+        R-->>C: data: [DONE]<br/>(x_metrics on final chunk if verbose)
+    end
+
+    Note over R,H: Failure BEFORE the response starts →<br/>handlers in app/main.py log once + map to HTTP
+    Note over R: Failure MID-SSE → the stream generator is the<br/>boundary: logs with exc_info, emits error frame + [DONE]
+```
+
+## Model lifecycle
+
+States are visible across processes via marker files in `models/runtime/`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> absent
+
+    absent --> downloading: models download
+    downloading --> ready: snapshot_download ok<br/>registry updated
+    downloading --> absent: download failed
+
+    ready --> running: load into a backend<br/>API load or CLI chat
+    running --> ready: unload · process exit ·<br/>PID check clears a stale marker
+
+    ready --> unsupported: doctor verdict —<br/>model_type unsupported by MLX
+    ready --> incomplete: doctor verdict —<br/>required files missing
+
+    ready --> absent: models delete
+    note right of running
+        update and delete are BLOCKED
+        while downloading or running
+    end note
+```
+
+## Backend mutual exclusion
+
+Loading into one backend releases the other — limited unified memory.
+
+```mermaid
+stateDiagram-v2
+    [*] --> none
+
+    none --> text: load a text model
+    none --> media: load a VLM
+
+    text --> text: swap text model<br/>(unloads previous)
+    media --> media: swap VLM<br/>(unloads previous)
+
+    text --> media: media request<br/>(text backend released first)
+    media --> text: text request<br/>(media backend released first)
+
+    text --> none: unload
+    media --> none: unload
+
+    note right of none
+        AudioService (STT/TTS) is independent:
+        it loads alongside whichever chat
+        backend is resident.
+    end note
+```

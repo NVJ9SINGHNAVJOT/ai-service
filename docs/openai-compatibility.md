@@ -17,9 +17,9 @@ unknown field **not** in `_IGNORED_CHAT_FIELDS` is rejected with HTTP 400. So th
 default answer for "does it support X?" is **no, loudly** — you get an error
 rather than a silently ignored setting.
 
-For the runtime path a request takes after validation (backend selection,
-streaming, stop sequences), see
-[project-flow.md — Flow 1](project-flow.md#flow-1--api-chat-completion-post-v1chatcompletions).
+After validation the request is routed to the `mlx-lm` or `mlx-vlm` backend
+(whichever the model and content parts call for), generated, and trimmed at the
+first `stop` sequence. [system-design.md](system-design.md) diagrams that path.
 
 ---
 

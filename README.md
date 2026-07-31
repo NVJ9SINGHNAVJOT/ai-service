@@ -71,8 +71,8 @@ The project uses `mlx-lm`, which is built for Apple's MLX stack and is intended 
 ## Project Layout
 
 The `app/` package holds the code; `models/` holds weights and runtime state. For
-the annotated `app/` package map — and the reasoning behind the layout — see
-[docs/system-design.md](docs/system-design.md).
+the annotated `app/` package map, the naming conventions, and the reasoning behind
+the layout — see [docs/structure.md](docs/structure.md).
 
 ```text
 models/
@@ -95,11 +95,11 @@ tests/
 
 One shared, framework-free service core (`app/services/`) sits behind two delivery
 layers — the FastAPI server (`app/api/`, HTTP-only) and the Typer CLI (`app/cli/`,
-terminal-only) — and both call the same services. For the full breakdown — every
-component, the cross-cutting invariants, and the runtime flows — see the
-[`docs/`](docs/) folder: start at [docs/rules.md](docs/rules.md), then
-[docs/system-design.md](docs/system-design.md) (structure & why) and
-[docs/project-flow.md](docs/project-flow.md) (what happens at runtime).
+terminal-only) — and both call the same services. For the full breakdown see the
+[`docs/`](docs/) folder: [docs/structure.md](docs/structure.md) (directory map,
+nomenclature, and what every component does) and
+[docs/system-design.md](docs/system-design.md) (diagrams: layers, module
+dependencies, request sequence, model lifecycle).
 
 ## How Model Storage Works
 
