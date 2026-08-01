@@ -3,9 +3,52 @@
 Diagrams only. For the written breakdown — directory map, naming conventions, and
 what each component does — see [structure.md](structure.md).
 
+## Reading the numbers
+
+Edges that represent a **step in a flow** are numbered so a path can be followed
+in order. Edges that represent **structure** (an import, "depends on") are never
+numbered — that difference is the point of the notation.
+
+| Situation | Notation | Read it as |
+|---|---|---|
+| Linear step | `1`, `2`, `3` | happens next |
+| **Split — either/or** (one branch is taken) | same number, letter suffix: `2a`, `2b` | *or* |
+| **Split — fan-out** (every branch is taken) | dotted decimal: `4.1`, `4.2` | *and* |
+| **Converge** (branches rejoin) | the shared number repeats on both incoming edges | both paths arrive at the same step |
+| Structural / dependency edge | no label | not part of any flow |
+
+So when an arrow reaches a box and then splits in two, the question is whether the
+flow picks one exit or takes both. Picks one → `2a` / `2b` (they are the *same*
+step, two outcomes, so the counter does **not** advance twice). Takes both →
+`4.1` / `4.2` (one step, two effects). When the branches meet again, the next
+number is written once on each incoming arrow, not renumbered per branch:
+
+```mermaid
+flowchart LR
+    a["step"] -->|1| b["branch point"]
+    b -->|2a| c["taken when X"]
+    b -->|2b| d["taken when not X"]
+    c -->|3| e["rejoin"]
+    d -->|3| e
+    e -->|"4.1"| f["both happen"]
+    e -->|"4.2"| g["both happen"]
+```
+
+Two diagram types opt out:
+
+- **Sequence diagrams** use mermaid's `autonumber`, which counts messages
+  linearly. Branching is already expressed by the `alt` / `else` blocks, so the
+  letter suffixes are redundant there — an `alt` block visually brackets its own
+  alternative.
+- **State diagrams** and the **module dependency graph** have no step order at
+  all: their edges are transitions and imports, not a sequence. They stay
+  unnumbered.
+
 ## Layers
 
-Two delivery mechanisms over one framework-free service core.
+Two delivery mechanisms over one framework-free service core. Numbers trace one
+request; `1a`/`1b` are the two entry points, `3a`–`3d` the backend a request
+lands on (exactly one per request).
 
 ```mermaid
 flowchart TD
@@ -39,15 +82,15 @@ flowchart TD
 
     disk[("models/<br/>weights · registry.json · runtime markers")]
 
-    client --> api
-    user --> cli
-    api --> services
-    cli --> services
-    services --> mlxlm
-    services --> mlxvlm
-    services --> whisper
-    services --> audio
-    services --> disk
+    client -->|1a| api
+    user -->|1b| cli
+    api -->|2| services
+    cli -->|2| services
+    services -->|3a| mlxlm
+    services -->|3b| mlxvlm
+    services -->|3c| whisper
+    services -->|3d| audio
+    services -->|4| disk
     delivery -.-> shared
     core -.-> shared
 ```
