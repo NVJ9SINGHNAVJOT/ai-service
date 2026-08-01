@@ -257,7 +257,7 @@ API_PORT=8000
 
 # ── Inference defaults ───────────────────────────────────────────
 # These act as fallbacks if the API caller doesn't specify them.
-DEFAULT_MAX_TOKENS=512
+DEFAULT_MAX_TOKENS=1000
 DEFAULT_TEMPERATURE=0.7
 DEFAULT_TOP_P=0.9
 DEFAULT_REPETITION_PENALTY=1.1
@@ -549,7 +549,7 @@ Optional chat settings:
 python -m app.cli.main chat \
   --model org__your-text-model \
   --system "You are a helpful coding assistant." \
-  --max-tokens 512 \
+  --max-tokens 1000 \
   --temperature 0.7 \
   --top-p 0.9 \
   --repetition-penalty 1.1

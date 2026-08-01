@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
 
     # ── Inference defaults ──────────────────────────────────────────────────
-    default_max_tokens: int = 512
+    default_max_tokens: int = 1000
     default_temperature: float = 0.7
     default_top_p: float = 0.9
     default_repetition_penalty: float = 1.1

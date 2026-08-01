@@ -38,7 +38,7 @@ class ChatSession:
         model_path: Path,
         model_name: str,
         system_prompt: Optional[str] = None,
-        max_tokens: int = 512,
+        max_tokens: int = 1000,
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
