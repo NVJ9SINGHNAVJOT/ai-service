@@ -30,7 +30,6 @@ models/runtime/
 
 # Agents
 .claude/
-plans/
 
 # IDE
 .idea/
@@ -53,3 +52,6 @@ logs/
 
 # tmp files
 tmp/
+
+# Miscellaneous
+/plans
