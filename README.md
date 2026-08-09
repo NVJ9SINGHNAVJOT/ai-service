@@ -8,7 +8,7 @@ This project gives you three things in one codebase:
 - a FastAPI server for model management and OpenAI-compatible inference
 - an OpenAI-compatible chat endpoint so other apps can call your local models using common SDKs
 
-It is designed for local development and learning, while still keeping the code structured enough to grow into a more production-like service.
+It is designed for local development, while still keeping the code structured enough to grow into a more production-like service.
 
 ## What This Project Does
 
@@ -26,14 +26,12 @@ This is useful if you want:
 
 - a local chat backend for your app
 - an OpenAI-style API in front of your MLX models
-- a simple learning project to understand how model serving works
 - a single-machine inference server for personal tools or internal testing
 
 ## Who This Is For
 
 This project is a good fit if you are:
 
-- learning Python and want a readable backend project
 - building a Node.js, Python, or Go app that should talk to local models
 - using Apple Silicon and want MLX-native inference
 - experimenting with chat APIs and streaming responses
@@ -438,9 +436,11 @@ task model:chat-media MODEL=org__your-media-model
 task audio:setup
 ```
 
-Pre-downloads the Whisper (STT) and Kokoro (TTS) weights (~1.8 GB) into
-`models/hf-cache/` so the first voice request is instant. `task setup` runs this
-automatically as its final step.
+Downloads the Whisper (STT) and Kokoro (TTS) weights (~1.8 GB) into
+`models/hf-cache/`. **Required before using `/v1/audio/*`** — this is the only
+thing that fetches speech weights; a request that finds them missing returns
+`503` rather than downloading mid-call. `task setup` runs it automatically as its
+final step.
 
 ### Testing
 
@@ -504,7 +504,8 @@ python -m app.cli.main models delete --name org__your-text-model --force
 python -m app.cli.main audio prepare
 ```
 
-Pre-downloads the STT (Whisper) and TTS (Kokoro) weights into `models/hf-cache/`.
+Downloads the STT (Whisper) and TTS (Kokoro) weights into `models/hf-cache/`. The
+`/v1/audio/*` endpoints never download, so run this first.
 
 ### Pick a model interactively, then chat
 
@@ -687,12 +688,17 @@ The repos are configurable via `.env`; defaults:
 - STT: `mlx-community/whisper-large-v3-turbo`
 - TTS: `prince-canuma/Kokoro-82M` (voice `af_heart`, American English)
 
-They download on first use into `models/hf-cache/`. Pre-fetch them so the first
-request doesn't block on a multi-GB download:
+Fetch them into `models/hf-cache/` **before** calling the endpoints:
 
 ```bash
 task audio:setup          # or: python -m app.cli.main audio prepare
 ```
+
+This is the only command that downloads speech weights. The endpoints check the
+local cache first and return `503` with the command to run when a model is
+missing, instead of stalling the request on a multi-GB download. Asking for a
+voice that isn't among the cached voice packs is a `400` listing the ones you
+can use.
 
 ### Examples
 
@@ -1044,13 +1050,16 @@ This project includes a few basic safety checks:
 
 This is good baseline protection for a local tool, but you should still treat this as a local/dev-oriented service unless you add stronger authentication, authorization, and deployment hardening.
 
-## Current Limitations
+## Scope & Tradeoffs
+
+Deliberate consequences of targeting one Apple Silicon machine, not a roadmap of
+missing features:
 
 - only chat completions are exposed in the OpenAI-compatible layer
 - token usage may be estimated when MLX-LM does not provide exact values
-- one model is loaded at a time
-- no built-in auth enforcement yet
-- optimized for local usage, not multi-node deployment
+- one model is loaded at a time — unified memory is the constraint
+- no built-in auth enforcement
+- built for local usage, not multi-node deployment
 
 ## Testing
 
@@ -1068,28 +1077,6 @@ python3 -m pytest tests/ -v
 
 For real local-model verification with `model:doctor`, verbose text chat, and
 image chat using `./tmp/testing.jpg`, see [docs/TESTING.md](docs/TESTING.md).
-
-## Learning Guide for This Codebase
-
-If you are still learning Python, this is a good order to read files:
-
-1. `app/config.py`
-2. `app/schemas/model.py`
-3. `app/schemas/inference.py`
-4. `app/services/model_manager.py`
-5. `app/services/inference.py`
-6. `app/cli/chat_session.py`
-7. `app/api/routes_models.py`
-8. `app/api/routes_openai.py`
-9. `app/main.py`
-
-Why this order helps:
-
-- config explains app settings
-- schemas explain data shapes
-- services explain the real logic
-- routes show how HTTP is wired on top of that logic
-- main shows how the app starts
 
 ## Troubleshooting
 
@@ -1203,17 +1190,6 @@ This project prefers:
 - safe filesystem operations
 - simple tests that do not require real model downloads
 
-## Recommended Next Improvements
-
-If you want to grow this project further, the next useful additions would be:
-
-- API-key authentication
-- OpenAI-compatible `/v1/models`
-- OpenAI-compatible embeddings endpoint if needed
-- richer structured logging
-- request queueing for safer concurrent inference
-- persistent conversation/session storage
-
 ## Summary
 
 This project is a clean local serving layer for MLX models on Apple Silicon.
@@ -1225,5 +1201,3 @@ You can:
 - call your models through an OpenAI-compatible API
 - use OpenAI-compatible SDKs against your local server
 - stream responses in both CLI and API
-
-If you are learning, the codebase is intentionally organized so you can understand it layer by layer without needing to know every advanced Python pattern first.

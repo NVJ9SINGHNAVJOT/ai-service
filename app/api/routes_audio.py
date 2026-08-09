@@ -19,7 +19,7 @@ import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
-from app.core.exceptions import InferenceError
+from app.core.exceptions import InferenceError, InvalidVoiceError, SpeechModelNotPreparedError
 from app.core.logging import get_logger
 from app.schemas.audio import SpeechRequest, TranscriptionResponse
 from app.api.response import send_response
@@ -51,6 +51,8 @@ async def transcribe_audio(
             tmp.write(await file.read())
             tmp_path = tmp.name
         text = audio_service.transcribe(tmp_path, language=language)
+    except SpeechModelNotPreparedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except InferenceError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     finally:
@@ -81,6 +83,10 @@ async def create_speech(request: Request, body: SpeechRequest) -> Response:
         buffer = io.BytesIO()
         sf.write(buffer, audio, sample_rate, format="WAV")
         buffer.seek(0)
+    except InvalidVoiceError as exc:  # a bad name, not a missing download
+        raise HTTPException(status_code=400, detail=str(exc))
+    except SpeechModelNotPreparedError as exc:  # before the catch-all below
+        raise HTTPException(status_code=503, detail=str(exc))
     except InferenceError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:

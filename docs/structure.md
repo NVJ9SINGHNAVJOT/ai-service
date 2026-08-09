@@ -170,7 +170,13 @@ generation.
 
 ### `services/audio.py` — `AudioService`
 Local STT (Whisper via `mlx-whisper`) and TTS (Kokoro via `mlx-audio`). Both load
-lazily on first use alongside the chat model. STT's handle lives inside
+lazily on first use alongside the chat model, but never *download*: each load is
+gated on `_ensure_speech_model_available()`, an offline HF-cache probe that raises
+`SpeechModelNotPreparedError` (→ HTTP 503) when the weights — or every Kokoro
+voice pack — are absent; a voice missing from an otherwise-populated `voices/`
+dir is a bad name instead, so it raises `InvalidVoiceError` (→ HTTP 400).
+`audio prepare` is the only download path.
+STT's handle lives inside
 `mlx_whisper` (we don't own it) so it stays resident for the process lifetime; the
 Kokoro TTS handle *is* ours, so a re-arming idle timer unloads it after
 `tts_idle_timeout_seconds` of inactivity (0 = keep resident) and it reloads on the

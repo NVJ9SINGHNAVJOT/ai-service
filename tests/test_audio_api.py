@@ -14,7 +14,7 @@ import logging
 
 import numpy as np
 
-from app.core.exceptions import InferenceError
+from app.core.exceptions import InferenceError, InvalidVoiceError, SpeechModelNotPreparedError
 
 
 def test_speech_endpoint_returns_wav(api_client, monkeypatch):
@@ -75,6 +75,60 @@ def test_transcription_endpoint_returns_text(api_client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"text": "transcribed text"}
+
+
+def test_speech_endpoint_returns_503_when_model_not_prepared(api_client, monkeypatch, caplog):
+    """An unprepared TTS model is a 503 pointing at `task audio:setup`, logged once."""
+    import app.main as main
+
+    def _not_prepared(text, voice=None, speed=1.0):
+        raise SpeechModelNotPreparedError("TTS (Kokoro)", "prince-canuma/Kokoro-82M")
+
+    monkeypatch.setattr(main.audio_service, "synthesize", _not_prepared)
+
+    with caplog.at_level(logging.INFO):
+        resp = api_client.post("/v1/audio/speech", json={"input": "hi"})
+
+    assert resp.status_code == 503
+    assert "task audio:setup" in resp.json()["detail"]
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1  # logged once at the boundary, not also in the route
+    assert errors[0].request_id == resp.headers["X-Request-ID"]
+    assert errors[0].exc_info is not None
+
+
+def test_speech_endpoint_returns_400_for_unknown_voice(api_client, monkeypatch):
+    """An unknown voice is the client's error (400), not an unprepared server (503)."""
+    import app.main as main
+
+    def _bad_voice(text, voice=None, speed=1.0):
+        raise InvalidVoiceError("zz_bogus", ["af_bella", "af_heart"])
+
+    monkeypatch.setattr(main.audio_service, "synthesize", _bad_voice)
+
+    resp = api_client.post("/v1/audio/speech", json={"input": "hi", "voice": "zz_bogus"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "zz_bogus" in detail and "af_heart" in detail
+    assert "audio:setup" not in detail  # not a setup problem, so don't suggest setup
+
+
+def test_transcription_endpoint_returns_503_when_model_not_prepared(api_client, monkeypatch):
+    """An unprepared STT model is a 503 rather than a mid-request download."""
+    import app.main as main
+
+    def _not_prepared(audio_path, language=None):
+        raise SpeechModelNotPreparedError("STT (Whisper)", "mlx-community/whisper-large-v3-turbo")
+
+    monkeypatch.setattr(main.audio_service, "transcribe", _not_prepared)
+
+    files = {"file": ("clip.wav", io.BytesIO(b"RIFFfake-wav-bytes"), "audio/wav")}
+    resp = api_client.post("/v1/audio/transcriptions", files=files)
+
+    assert resp.status_code == 503
+    assert "task audio:setup" in resp.json()["detail"]
 
 
 def test_transcription_endpoint_requires_file(api_client):

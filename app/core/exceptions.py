@@ -52,6 +52,28 @@ class InferenceError(MLXManagerError):
         self.reason = reason
 
 
+class SpeechModelNotPreparedError(MLXManagerError):
+    """Raised when a speech (STT/TTS) model is not in the local HuggingFace cache."""
+
+    def __init__(self, label: str, repo_id: str, detail: str = "") -> None:
+        super().__init__(
+            f"{label} model '{repo_id}' is not downloaded{detail}. Run "
+            "`task audio:setup` (or `python -m app.cli.main audio prepare`) to fetch "
+            "the speech models; requests never download them."
+        )
+        self.label = label
+        self.repo_id = repo_id
+
+
+class InvalidVoiceError(MLXManagerError):
+    """Raised when a TTS voice is not one of the voices the model ships."""
+
+    def __init__(self, voice: str, available: list[str]) -> None:
+        super().__init__(f"Unknown voice '{voice}'. Available voices: {', '.join(available)}.")
+        self.voice = voice
+        self.available = available
+
+
 class DownloadError(MLXManagerError):
     """Raised when a model download fails."""
 

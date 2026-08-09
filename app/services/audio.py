@@ -15,6 +15,13 @@ Design decisions
   under a lock; because we own that handle, it is dropped after
   ``tts_idle_timeout_seconds`` of inactivity (re-arming timer) to reclaim memory,
   then reloaded lazily on the next request.
+
+- Loading never *downloads*. Both mlx-whisper and mlx-audio fall back to
+  ``snapshot_download`` when handed a repo id they can't resolve locally, which
+  turns a first request into a multi-GB stall. Every load is therefore gated on
+  :meth:`AudioService._ensure_speech_model_available`, an offline cache probe;
+  ``python -m app.cli.main audio prepare`` (``task audio:setup``) is the only path
+  that fetches speech weights.
 """
 
 from __future__ import annotations
@@ -28,7 +35,12 @@ import numpy as np
 
 from app.config import Settings
 from app.config import settings as global_settings
-from app.core.exceptions import InferenceError
+from app.core.exceptions import (
+    InferenceError,
+    InvalidVoiceError,
+    MLXManagerError,
+    SpeechModelNotPreparedError,
+)
 from app.core.logging import get_logger
 from app.patches import patch_interpolate_ceil_drift
 
@@ -43,7 +55,30 @@ class AudioService:
         self._lock = threading.Lock()
         self._tts_model = None
         self._tts_model_name: Optional[str] = None
+        self._tts_snapshot_path: Optional[Path] = None
         self._tts_idle_timer: Optional[threading.Timer] = None
+
+    # ── Local availability ───────────────────────────────────────────────────
+
+    def _ensure_speech_model_available(self, repo_id: str, label: str) -> Path:
+        """
+        Resolve a speech model's snapshot in the local HuggingFace cache.
+
+        Purely filesystem — ``local_files_only=True`` never touches the network,
+        so a missing model fails fast instead of downloading mid-request.
+
+        Returns:
+            Path to the cached snapshot directory.
+
+        Raises:
+            SpeechModelNotPreparedError: if the model is not in the local cache.
+        """
+        from huggingface_hub import snapshot_download
+
+        try:
+            return Path(snapshot_download(repo_id=repo_id, local_files_only=True))
+        except Exception as exc:  # any local-resolution failure == not prepared
+            raise SpeechModelNotPreparedError(label, repo_id) from exc
 
     # ── Speech-to-Text ───────────────────────────────────────────────────────
 
@@ -55,14 +90,19 @@ class AudioService:
         which mlx-whisper shells out to internally.
 
         Raises:
+            SpeechModelNotPreparedError: if the Whisper weights are not cached.
             InferenceError: if transcription fails.
         """
+        # Hand mlx-whisper the resolved snapshot directory, not the repo id: its
+        # loader short-circuits on an existing path, so it can never download.
+        model_path = self._ensure_speech_model_available(self._cfg.stt_model, "STT (Whisper)")
+
         try:
             import mlx_whisper  # type: ignore
 
             result = mlx_whisper.transcribe(
                 str(audio_path),
-                path_or_hf_repo=self._cfg.stt_model,
+                path_or_hf_repo=str(model_path),
                 language=language,
             )
             return (result.get("text") or "").strip()
@@ -99,6 +139,9 @@ class AudioService:
         with self._lock:
             if self._tts_model is not None:
                 return
+            # Probe outside the try below so a missing model surfaces as itself
+            # rather than being rewrapped as a generic InferenceError.
+            snapshot = self._ensure_speech_model_available(self._cfg.tts_model, "TTS (Kokoro)")
             try:
                 self._configure_espeak()
                 patch_interpolate_ceil_drift()  # see app/patches + PATCHES.md
@@ -106,8 +149,12 @@ class AudioService:
 
                 logger.info("Loading TTS model '%s' …", self._cfg.tts_model)
                 started_at = time.perf_counter()
+                # Unlike whisper, mlx-audio must get the *repo id*: Kokoro's
+                # config.json has no model_type, so the architecture is inferred
+                # from the repo name — a snapshot-hash path breaks detection.
                 self._tts_model = load_model(self._cfg.tts_model)
                 self._tts_model_name = self._cfg.tts_model
+                self._tts_snapshot_path = snapshot
                 logger.info(
                     "TTS model '%s' loaded in %.2fs.",
                     self._cfg.tts_model,
@@ -116,6 +163,7 @@ class AudioService:
             except Exception as exc:
                 self._tts_model = None
                 self._tts_model_name = None
+                self._tts_snapshot_path = None
                 raise InferenceError(f"TTS model load failed: {exc}") from exc
 
     def _cancel_idle_timer(self) -> None:
@@ -146,6 +194,7 @@ class AudioService:
             )
             self._tts_model = None
             self._tts_model_name = None
+            self._tts_snapshot_path = None
             self._tts_idle_timer = None
 
     def synthesize(
@@ -161,6 +210,10 @@ class AudioService:
             Tuple of (mono float32 PCM samples, sample_rate).
 
         Raises:
+            SpeechModelNotPreparedError: if the Kokoro weights are not cached, or
+                no voice packs are cached at all.
+            InvalidVoiceError: if the voice packs are cached but this voice isn't
+                one of them — i.e. a bad name rather than a missing download.
             InferenceError: if the text is empty or synthesis fails.
         """
         if not text or not text.strip():
@@ -172,11 +225,23 @@ class AudioService:
         self._ensure_tts_loaded()
 
         try:
+            # Kokoro fetches voice packs separately at generate() time, so an
+            # uncached voice is a second way to trigger a mid-request download.
+            voice_name = voice or self._cfg.tts_voice
+            voices_dir = self._tts_snapshot_path / "voices"
+            if not (voices_dir / f"{voice_name}.safetensors").exists():
+                available = sorted(p.stem for p in voices_dir.glob("*.safetensors"))
+                if available:  # the cache is prepared → the name is wrong, not the setup
+                    raise InvalidVoiceError(voice_name, available)
+                raise SpeechModelNotPreparedError(
+                    "TTS (Kokoro)", self._cfg.tts_model, f" (missing voice pack '{voice_name}')"
+                )
+
             chunks: list[np.ndarray] = []
             sample_rate = 24000  # Kokoro default; overwritten by the model below
             for result in self._tts_model.generate(
                 text=text,
-                voice=voice or self._cfg.tts_voice,
+                voice=voice_name,
                 speed=speed,
                 lang_code=self._cfg.tts_lang_code,
             ):
@@ -186,7 +251,7 @@ class AudioService:
             if not chunks:
                 raise InferenceError("no audio was generated.")
             return np.concatenate(chunks), sample_rate
-        except InferenceError:
+        except MLXManagerError:  # domain errors are already meaningful — don't rewrap
             raise
         except Exception as exc:
             raise InferenceError(f"speech synthesis failed: {exc}") from exc
