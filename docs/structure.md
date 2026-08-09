@@ -169,18 +169,25 @@ image/audio content parts (including base64 `input_audio` → temp file) before
 generation.
 
 ### `services/audio.py` — `AudioService`
-Local STT (Whisper via `mlx-whisper`) and TTS (Kokoro via `mlx-audio`). Both load
-lazily on first use alongside the chat model, but never *download*: each load is
-gated on `_ensure_speech_model_available()`, an offline HF-cache probe that raises
-`SpeechModelNotPreparedError` (→ HTTP 503) when the weights — or every Kokoro
-voice pack — are absent; a voice missing from an otherwise-populated `voices/`
-dir is a bad name instead, so it raises `InvalidVoiceError` (→ HTTP 400).
-`audio prepare` is the only download path.
-STT's handle lives inside
-`mlx_whisper` (we don't own it) so it stays resident for the process lifetime; the
-Kokoro TTS handle *is* ours, so a re-arming idle timer unloads it after
-`tts_idle_timeout_seconds` of inactivity (0 = keep resident) and it reloads on the
-next request. Independent of the chat backends.
+Local STT (Whisper via `mlx-whisper`, Parakeet via `mlx-audio`) and TTS (Kokoro
+via `mlx-audio`). Models load lazily on first use alongside the chat model, but
+never *download*: each load is gated on `_ensure_speech_model_available()`, an
+offline HF-cache probe that raises `SpeechModelNotPreparedError` (→ HTTP 503)
+when the weights — or every Kokoro voice pack — are absent; a name missing from
+an otherwise-populated cache is a client error instead (`InvalidVoiceError`,
+`InvalidSTTModelError`, `InvalidLangCodeError` → HTTP 400). `audio prepare` is
+the only download path.
+
+Two `_ResidentModel` slots — one STT, one TTS — each hold **one** model behind a
+re-arming idle timer that unloads it after `stt_idle_timeout_seconds` /
+`tts_idle_timeout_seconds` (0 = keep resident); an in-flight counter keeps the
+timer from dropping a model mid-request. A transcription request picks its model
+from `settings.available_stt_models` (HF repo ids — *not* the `org__name` form
+used for `models/downloaded`), and asking for a different one unloads the current
+one first. `mlx_whisper` caches its handle on its own module rather than handing
+us one, so the slot primes and clears `mlx_whisper.transcribe.ModelHolder`.
+`describe_stt()` / `describe_tts()` back `GET /v1/audio/models` and load nothing.
+Independent of the chat backends.
 
 ### `services/model_manager.py` — `ModelManager`
 Everything about models *on disk*: download (`snapshot_download`), list, update,

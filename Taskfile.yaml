@@ -40,7 +40,7 @@ tasks:
       - 'echo "Setup complete. Activate the virtual environment with: source .venv/bin/activate"'
 
   audio:setup:
-    desc: "Pre-download the speech (STT/TTS) model weights so the first voice chat is instant (~1.8 GB)"
+    desc: "Download the speech (STT/TTS) model weights — required before any voice request (~6.6 GB for the default set)"
     cmds:
       - .venv/bin/python -m app.cli.main audio prepare
 

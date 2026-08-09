@@ -51,7 +51,7 @@ This project is not trying to be a full distributed inference platform. It is in
 - Start interactive terminal chat
 - Run a FastAPI-based OpenAI-compatible inference API
 - Expose an OpenAI-compatible `/v1/chat/completions` endpoint
-- Run fully local speech-to-text and text-to-speech through OpenAI-compatible `/v1/audio/*` endpoints (Whisper + Kokoro on MLX)
+- Run fully local speech-to-text and text-to-speech through `/v1/audio/*` endpoints (Whisper or Parakeet for STT, Kokoro for TTS, all on MLX)
 - Support streaming in both CLI and API
 - Auto-load models on demand when an inference request arrives
 - Keep the current API model loaded until it is swapped, explicitly unloaded, or the server stops
@@ -106,7 +106,7 @@ There are two chat-model locations:
 - `models/downloaded/`
 - `models/custom/`
 
-Speech models (Whisper for STT, Kokoro for TTS) are cached separately in the
+Speech models (Whisper/Parakeet for STT, Kokoro for TTS) are cached separately in the
 project-local HuggingFace cache:
 
 - `models/hf-cache/`
@@ -271,10 +271,12 @@ EXAMPLE_MEDIA_MODEL=org__your-media-model
 HF_TOKEN=hf_...
 
 # ── Speech models (STT / TTS) ───────────────────────────────────
-STT_MODEL=mlx-community/whisper-large-v3-turbo
+STT_MODEL=mlx-community/whisper-large-v3-turbo   # default when a request omits `model`
+STT_MODELS=mlx-community/whisper-large-v3-turbo,mlx-community/parakeet-tdt-0.6b-v2,mlx-community/parakeet-tdt-0.6b-v3
 TTS_MODEL=prince-canuma/Kokoro-82M
-TTS_VOICE=af_heart
-TTS_LANG_CODE=a
+TTS_VOICE=af_heart            # default voice; overridable per request
+TTS_LANG_CODE=a               # default language code; overridable per request
+STT_IDLE_TIMEOUT_SECONDS=60   # unload the STT model after N idle seconds (0 = keep resident)
 TTS_IDLE_TIMEOUT_SECONDS=60   # unload the TTS model after N idle seconds (0 = keep resident)
 
 # ── Model cache (where HF weights download; default: project-local) ──
@@ -434,13 +436,17 @@ task model:chat-media MODEL=org__your-media-model
 
 ```bash
 task audio:setup
+
+# or just one repo, when you don't want the whole set
+python -m app.cli.main audio prepare -m mlx-community/parakeet-tdt-0.6b-v2
 ```
 
-Downloads the Whisper (STT) and Kokoro (TTS) weights (~1.8 GB) into
-`models/hf-cache/`. **Required before using `/v1/audio/*`** — this is the only
-thing that fetches speech weights; a request that finds them missing returns
-`503` rather than downloading mid-call. `task setup` runs it automatically as its
-final step.
+Downloads every model in `STT_MODELS` plus the Kokoro (TTS) weights into
+`models/hf-cache/` — ~6.6 GB for the default set of three STT models; trim
+`STT_MODELS` if you only want one. **Required before using `/v1/audio/*`** — this
+is the only thing that fetches speech weights; a request that finds them missing
+returns `503` rather than downloading mid-call. `task setup` runs it
+automatically as its final step.
 
 ### Testing
 
@@ -504,8 +510,9 @@ python -m app.cli.main models delete --name org__your-text-model --force
 python -m app.cli.main audio prepare
 ```
 
-Downloads the STT (Whisper) and TTS (Kokoro) weights into `models/hf-cache/`. The
-`/v1/audio/*` endpoints never download, so run this first.
+Downloads every `STT_MODELS` repo plus the TTS (Kokoro) weights into
+`models/hf-cache/`; `-m <repo>` fetches just one. The `/v1/audio/*` endpoints
+never download, so run this first.
 
 ### Pick a model interactively, then chat
 
@@ -600,8 +607,8 @@ The API has these groups of routes:
 
 Text-only requests run through `mlx-lm`. Requests that include image or audio
 content in OpenAI-style multimodal message parts are routed through `mlx-vlm`
-automatically. Speech transcription and synthesis run through `mlx-whisper` and
-`mlx-audio`.
+automatically. Speech transcription runs through `mlx-whisper` (Whisper) or
+`mlx-audio` (Parakeet), and synthesis through `mlx-audio` (Kokoro).
 
 For the exact `/v1/chat/completions` request contract — which OpenAI fields are
 honored, which are accepted but ignored, which return `400`, and what image/audio
@@ -617,7 +624,8 @@ input forms are allowed — see
 | POST | `/api/v1/models/load` | Load a model into memory |
 | POST | `/api/v1/models/unload` | Unload the currently loaded model |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat completions |
-| POST | `/v1/audio/transcriptions` | Speech-to-text (Whisper) — multipart audio → text |
+| GET | `/v1/audio/models` | Selectable STT models, TTS voices, and language codes |
+| POST | `/v1/audio/transcriptions` | Speech-to-text (Whisper / Parakeet) — multipart audio → text |
 | POST | `/v1/audio/speech` | Text-to-speech (Kokoro) — text → WAV audio |
 
 ## Health Endpoint
@@ -668,11 +676,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/models/unload \
 
 ## Voice: Speech-to-Text & Text-to-Speech
 
-Two local, OpenAI-compatible audio endpoints run fully on-device — no audio or
-text ever leaves the machine.
+Three local audio endpoints run fully on-device — no audio or text ever leaves
+the machine.
 
+- **Discovery** — `GET /v1/audio/models`: what you can pass to the other two —
+  the selectable STT models, the cached TTS voices, and the language codes. A
+  local extension, not part of the OpenAI API.
 - **STT** — `POST /v1/audio/transcriptions`: a multipart audio upload returns
-  `{ "text": ... }`, transcribed by Whisper on MLX (`mlx-whisper`).
+  `{ "text": ... }`, transcribed by Whisper (`mlx-whisper`) or Parakeet
+  (`mlx-audio`) on MLX.
 - **TTS** — `POST /v1/audio/speech`: a JSON body `{ "input": "...", "voice": "af_heart" }`
   returns WAV audio bytes, synthesized by Kokoro on MLX (`mlx-audio`).
 
@@ -683,12 +695,26 @@ endpoint.)
 
 ### Models
 
-The repos are configurable via `.env`; defaults:
+A transcription request picks its model with the `model` field; the value is the
+**HuggingFace repo id** exactly as configured (the `org__name` form used for
+`models/downloaded` does *not* apply here). It must be one of `STT_MODELS`, or
+the request is a `400` listing what's available. Omit it and `STT_MODEL` is used.
 
-- STT: `mlx-community/whisper-large-v3-turbo`
-- TTS: `prince-canuma/Kokoro-82M` (voice `af_heart`, American English)
+| STT model | Languages | `language` hint | Notes |
+|-----------|-----------|-----------------|-------|
+| `mlx-community/whisper-large-v3-turbo` | multilingual | honored | Default. Can hallucinate text during silence. |
+| `mlx-community/parakeet-tdt-0.6b-v2` | English only | ignored | Best English accuracy, fast, no silence hallucination. |
+| `mlx-community/parakeet-tdt-0.6b-v3` | 25 languages | ignored | Multilingual Parakeet; slightly behind v2 on English. |
 
-Fetch them into `models/hf-cache/` **before** calling the endpoints:
+TTS is a single model: `prince-canuma/Kokoro-82M`, defaulting to voice `af_heart`
+and language code `a` (American English). Both are overridable per request.
+
+Only one STT model and one TTS model are resident at a time. Asking for a
+different STT model unloads the current one, and each model is dropped after
+`STT_IDLE_TIMEOUT_SECONDS` / `TTS_IDLE_TIMEOUT_SECONDS` of inactivity (`0` keeps
+it resident), reloading lazily on the next request.
+
+Fetch the weights into `models/hf-cache/` **before** calling the endpoints:
 
 ```bash
 task audio:setup          # or: python -m app.cli.main audio prepare
@@ -697,23 +723,43 @@ task audio:setup          # or: python -m app.cli.main audio prepare
 This is the only command that downloads speech weights. The endpoints check the
 local cache first and return `503` with the command to run when a model is
 missing, instead of stalling the request on a multi-GB download. Asking for a
-voice that isn't among the cached voice packs is a `400` listing the ones you
-can use.
+voice, model, or language code that isn't available is a `400` listing the ones
+you can use — `GET /v1/audio/models` reports the same thing up front, including
+a `ready` flag per model so a UI can tell "not downloaded" from "wrong name".
 
 ### Examples
 
 ```bash
-# Transcribe a clip (multipart upload)
+# What can I ask for?
+curl http://127.0.0.1:8000/v1/audio/models
+
+# Transcribe a clip with the default model (multipart upload)
 curl -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
   -F "file=@clip.wav;type=audio/wav"
 # → {"text": "..."}
 
+# …or pick a model per request
+curl -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+  -F "file=@clip.wav;type=audio/wav" \
+  -F "model=mlx-community/parakeet-tdt-0.6b-v2"
+
 # Synthesize speech (returns WAV bytes)
 curl -X POST http://127.0.0.1:8000/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"input":"Hello from Kokoro.","voice":"af_heart"}' \
+  -d '{"input":"Hello from Kokoro.","voice":"bf_emma","lang_code":"b"}' \
   --output reply.wav
 ```
+
+### Transcription request fields
+
+`POST /v1/audio/transcriptions` is a multipart form:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `file` | — (required) | The audio to transcribe (wav, mp3, webm, …). |
+| `model` | `STT_MODEL` | HF repo id from `GET /v1/audio/models`. Not in `STT_MODELS` → `400`. |
+| `language` | auto-detected | ISO-639-1 hint. Honored only by models with `accepts_language_hint: true`. |
+| `response_format` | `json` | Accepted for OpenAI compatibility; the response is always JSON. |
 
 ### Speech request fields
 
@@ -723,7 +769,8 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
 | Field | Default | Description |
 |-------|---------|-------------|
 | `input` | — (required) | The text to synthesize. |
-| `voice` | server default (`af_heart`) | Kokoro voice id. |
+| `voice` | `TTS_VOICE` (`af_heart`) | Kokoro voice id, from `GET /v1/audio/models`. |
+| `lang_code` | `TTS_LANG_CODE` (`a`) | Kokoro language code (`a` American English, `b` British, `e` Spanish, `f` French, `h` Hindi, `i` Italian, `j` Japanese, `p` Brazilian Portuguese, `z` Mandarin). Should match the voice's prefix letter. |
 | `speed` | `1.0` | Playback speed multiplier, `0.25`–`4.0`. |
 | `response_format` | `wav` | Output container. Only `wav` is supported; any other value returns `400`. |
 | `model` | — | Accepted for OpenAI compatibility; the TTS model is fixed server-side. |
@@ -1031,6 +1078,10 @@ The code uses project-specific exceptions, all subclassing `MLXManagerError`
 - `InvalidModelPathError` — a path fails a security/validity check
 - `ModelLoadError` — the model could not be loaded into memory
 - `InferenceError` — a generation/transcription/synthesis call failed
+- `SpeechModelNotPreparedError` — a speech model isn't cached; run `task audio:setup` (→ `503`)
+- `InvalidSTTModelError` — the requested STT model isn't in `STT_MODELS` (→ `400`)
+- `InvalidVoiceError` — the requested TTS voice isn't among the cached voice packs (→ `400`)
+- `InvalidLangCodeError` — the requested TTS language code isn't supported (→ `400`)
 - `DownloadError` — a HuggingFace download failed
 - `RegistryError` — a registry read/write failed
 - `ModelBusyError` — the model is `running`/`downloading`, so update/delete is blocked

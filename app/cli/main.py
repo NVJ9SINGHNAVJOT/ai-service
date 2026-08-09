@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -334,17 +334,35 @@ def models_delete(
 # ── audio prepare ──────────────────────────────────────────────────────────────
 
 @audio_app.command("prepare")
-def audio_prepare() -> None:
+def audio_prepare(
+    model: Optional[List[str]] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Fetch only these repos (repeatable). Defaults to every configured speech model.",
+    ),
+) -> None:
     """
     Pre-download the speech model weights into the HuggingFace cache.
 
-    Run once (e.g. from `task audio:setup`) so the first voice request doesn't
-    block while a multi-GB Whisper download happens. The repos come from
-    settings: STT_MODEL (Whisper) and TTS_MODEL (Kokoro).
+    Requests never download, so this must run before the first voice request
+    (e.g. via `task audio:setup`). The repos come from settings: every model in
+    STT_MODELS plus TTS_MODEL (Kokoro). Already-cached repos are a fast no-op.
     """
     from huggingface_hub import snapshot_download
 
-    targets = [("STT (Whisper)", settings.stt_model), ("TTS (Kokoro)", settings.tts_model)]
+    targets = [("STT", repo) for repo in settings.available_stt_models]
+    targets.append(("TTS (Kokoro)", settings.tts_model))
+    if model:
+        wanted = set(model)
+        unknown = wanted - {repo for _, repo in targets}
+        if unknown:
+            _abort(
+                f"Unknown speech model(s): {', '.join(sorted(unknown))}.\n"
+                f"  Configured: {', '.join(repo for _, repo in targets)}"
+            )
+        targets = [(label, repo) for label, repo in targets if repo in wanted]
+
     for label, repo in targets:
         console.print(f"[dim]Downloading {label} model [cyan]{repo}[/cyan] …[/dim]")
         try:

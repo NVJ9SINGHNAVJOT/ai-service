@@ -14,7 +14,13 @@ import logging
 
 import numpy as np
 
-from app.core.exceptions import InferenceError, InvalidVoiceError, SpeechModelNotPreparedError
+from app.core.exceptions import (
+    InferenceError,
+    InvalidLangCodeError,
+    InvalidSTTModelError,
+    InvalidVoiceError,
+    SpeechModelNotPreparedError,
+)
 
 
 def test_speech_endpoint_returns_wav(api_client, monkeypatch):
@@ -24,7 +30,7 @@ def test_speech_endpoint_returns_wav(api_client, monkeypatch):
     monkeypatch.setattr(
         main.audio_service,
         "synthesize",
-        lambda text, voice=None, speed=1.0: (np.zeros(2400, dtype=np.float32), 24000),
+        lambda text, voice=None, speed=1.0, lang_code=None: (np.zeros(2400, dtype=np.float32), 24000),
     )
 
     resp = api_client.post("/v1/audio/speech", json={"input": "Hello there.", "voice": "af_heart"})
@@ -45,7 +51,7 @@ def test_speech_endpoint_propagates_inference_error(api_client, monkeypatch):
     """A synthesis failure surfaces as HTTP 500 with the error detail."""
     import app.main as main
 
-    def _boom(text, voice=None, speed=1.0):
+    def _boom(text, voice=None, speed=1.0, lang_code=None):
         raise InferenceError("input text is empty.")
 
     monkeypatch.setattr(main.audio_service, "synthesize", _boom)
@@ -67,7 +73,7 @@ def test_transcription_endpoint_returns_text(api_client, monkeypatch):
     monkeypatch.setattr(
         main.audio_service,
         "transcribe",
-        lambda audio_path, language=None: "transcribed text",
+        lambda audio_path, language=None, model=None: "transcribed text",
     )
 
     files = {"file": ("clip.wav", io.BytesIO(b"RIFFfake-wav-bytes"), "audio/wav")}
@@ -81,7 +87,7 @@ def test_speech_endpoint_returns_503_when_model_not_prepared(api_client, monkeyp
     """An unprepared TTS model is a 503 pointing at `task audio:setup`, logged once."""
     import app.main as main
 
-    def _not_prepared(text, voice=None, speed=1.0):
+    def _not_prepared(text, voice=None, speed=1.0, lang_code=None):
         raise SpeechModelNotPreparedError("TTS (Kokoro)", "prince-canuma/Kokoro-82M")
 
     monkeypatch.setattr(main.audio_service, "synthesize", _not_prepared)
@@ -102,7 +108,7 @@ def test_speech_endpoint_returns_400_for_unknown_voice(api_client, monkeypatch):
     """An unknown voice is the client's error (400), not an unprepared server (503)."""
     import app.main as main
 
-    def _bad_voice(text, voice=None, speed=1.0):
+    def _bad_voice(text, voice=None, speed=1.0, lang_code=None):
         raise InvalidVoiceError("zz_bogus", ["af_bella", "af_heart"])
 
     monkeypatch.setattr(main.audio_service, "synthesize", _bad_voice)
@@ -119,8 +125,10 @@ def test_transcription_endpoint_returns_503_when_model_not_prepared(api_client, 
     """An unprepared STT model is a 503 rather than a mid-request download."""
     import app.main as main
 
-    def _not_prepared(audio_path, language=None):
-        raise SpeechModelNotPreparedError("STT (Whisper)", "mlx-community/whisper-large-v3-turbo")
+    def _not_prepared(audio_path, language=None, model=None):
+        raise SpeechModelNotPreparedError(
+            "STT", "mlx-community/whisper-large-v3-turbo"
+        )
 
     monkeypatch.setattr(main.audio_service, "transcribe", _not_prepared)
 
@@ -138,11 +146,149 @@ def test_transcription_endpoint_requires_file(api_client):
     assert resp.status_code == 422
 
 
+# ── per-request model / voice options ────────────────────────────────────────
+
+
+def test_transcription_endpoint_forwards_model_field(api_client, monkeypatch):
+    """The multipart `model` field selects the STT model instead of being ignored."""
+    import app.main as main
+
+    seen = {}
+
+    def _transcribe(audio_path, language=None, model=None):
+        seen["model"] = model
+        seen["language"] = language
+        return "ok"
+
+    monkeypatch.setattr(main.audio_service, "transcribe", _transcribe)
+
+    files = {"file": ("clip.wav", io.BytesIO(b"RIFFfake-wav-bytes"), "audio/wav")}
+    resp = api_client.post(
+        "/v1/audio/transcriptions",
+        files=files,
+        data={"model": "mlx-community/parakeet-tdt-0.6b-v2", "language": "en"},
+    )
+
+    assert resp.status_code == 200
+    assert seen == {"model": "mlx-community/parakeet-tdt-0.6b-v2", "language": "en"}
+
+
+def test_transcription_endpoint_returns_400_for_unknown_model(api_client, monkeypatch):
+    """An unconfigured STT model is the client's error (400), not a 503."""
+    import app.main as main
+
+    def _bad_model(audio_path, language=None, model=None):
+        raise InvalidSTTModelError("nope", ["mlx-community/whisper-large-v3-turbo"])
+
+    monkeypatch.setattr(main.audio_service, "transcribe", _bad_model)
+
+    files = {"file": ("clip.wav", io.BytesIO(b"RIFFfake-wav-bytes"), "audio/wav")}
+    resp = api_client.post("/v1/audio/transcriptions", files=files, data={"model": "nope"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "nope" in detail and "whisper-large-v3-turbo" in detail
+    assert "audio:setup" not in detail  # not a setup problem, so don't suggest setup
+
+
+def test_speech_endpoint_forwards_lang_code(api_client, monkeypatch):
+    """The request body's lang_code reaches the service."""
+    import app.main as main
+
+    seen = {}
+
+    def _synthesize(text, voice=None, speed=1.0, lang_code=None):
+        seen["lang_code"] = lang_code
+        return np.zeros(2400, dtype=np.float32), 24000
+
+    monkeypatch.setattr(main.audio_service, "synthesize", _synthesize)
+
+    resp = api_client.post(
+        "/v1/audio/speech", json={"input": "Hello.", "voice": "bf_emma", "lang_code": "b"}
+    )
+
+    assert resp.status_code == 200
+    assert seen["lang_code"] == "b"
+
+
+def test_speech_endpoint_returns_400_for_unknown_lang_code(api_client, monkeypatch):
+    """An unsupported language code is a 400, alongside the unknown-voice case."""
+    import app.main as main
+
+    def _bad_lang(text, voice=None, speed=1.0, lang_code=None):
+        raise InvalidLangCodeError("zz", ["a", "b"])
+
+    monkeypatch.setattr(main.audio_service, "synthesize", _bad_lang)
+
+    resp = api_client.post("/v1/audio/speech", json={"input": "hi", "lang_code": "zz"})
+
+    assert resp.status_code == 400
+    assert "zz" in resp.json()["detail"]
+
+
+def test_audio_models_endpoint_describes_both_backends(api_client, monkeypatch):
+    """GET /v1/audio/models gives a frontend everything it needs to call the other two."""
+    import app.main as main
+
+    monkeypatch.setattr(
+        main.audio_service,
+        "describe_stt",
+        lambda: {
+            "default": "mlx-community/whisper-large-v3-turbo",
+            "models": [
+                {
+                    "id": "mlx-community/whisper-large-v3-turbo",
+                    "backend": "mlx-whisper",
+                    "ready": True,
+                    "loaded": False,
+                    "accepts_language_hint": True,
+                    "languages": None,
+                },
+                {
+                    "id": "mlx-community/parakeet-tdt-0.6b-v2",
+                    "backend": "mlx-audio",
+                    "ready": False,
+                    "loaded": False,
+                    "accepts_language_hint": False,
+                    "languages": ["en"],
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        main.audio_service,
+        "describe_tts",
+        lambda: {
+            "model": "prince-canuma/Kokoro-82M",
+            "ready": True,
+            "loaded": False,
+            "default_voice": "af_heart",
+            "default_lang_code": "a",
+            "voices": ["af_heart", "bf_emma"],
+            "lang_codes": [{"code": "a", "label": "American English"}],
+            "speed": {"min": 0.25, "max": 4.0, "default": 1.0},
+            "response_formats": ["wav"],
+        },
+    )
+
+    resp = api_client.get("/v1/audio/models")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [m["id"] for m in body["stt"]["models"]] == [
+        "mlx-community/whisper-large-v3-turbo",
+        "mlx-community/parakeet-tdt-0.6b-v2",
+    ]
+    assert body["stt"]["models"][1]["ready"] is False  # UI can say "run audio:setup"
+    assert body["tts"]["voices"] == ["af_heart", "bf_emma"]
+    assert body["tts"]["response_formats"] == ["wav"]
+
+
 def test_speech_500_logged_once_with_request_id_and_traceback(api_client, monkeypatch, caplog):
     """A synthesis failure (500) is logged exactly once, correlated by request_id, with a traceback."""
     import app.main as main
 
-    def _boom(text, voice=None, speed=1.0):
+    def _boom(text, voice=None, speed=1.0, lang_code=None):
         raise InferenceError("input text is empty.")
 
     monkeypatch.setattr(main.audio_service, "synthesize", _boom)

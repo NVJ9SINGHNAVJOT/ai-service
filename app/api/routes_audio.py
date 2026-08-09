@@ -1,11 +1,12 @@
 """
 Audio API routes — local, OpenAI-compatible STT and TTS.
 
+- GET  /v1/audio/models          (local extension → selectable models + options)
 - POST /v1/audio/transcriptions  (multipart audio  → {"text": ...})
 - POST /v1/audio/speech          (JSON {input,...}  → audio/wav bytes)
 
-Both run fully on-device (Whisper + Kokoro on MLX); no audio or text leaves the
-machine. The actual model work lives in :class:`AudioService`.
+Everything runs fully on-device (Whisper/Parakeet + Kokoro on MLX); no audio or
+text leaves the machine. The actual model work lives in :class:`AudioService`.
 """
 
 from __future__ import annotations
@@ -19,14 +20,44 @@ import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
-from app.core.exceptions import InferenceError, InvalidVoiceError, SpeechModelNotPreparedError
+from app.core.exceptions import (
+    InferenceError,
+    InvalidLangCodeError,
+    InvalidSTTModelError,
+    InvalidVoiceError,
+    SpeechModelNotPreparedError,
+)
 from app.core.logging import get_logger
-from app.schemas.audio import SpeechRequest, TranscriptionResponse
+from app.schemas.audio import AudioCapabilitiesResponse, SpeechRequest, TranscriptionResponse
 from app.api.response import send_response
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/v1/audio", tags=["audio"])
+
+
+@router.get(
+    "/models",
+    response_model=AudioCapabilitiesResponse,
+    summary="List available STT/TTS models and options",
+)
+async def list_audio_models(request: Request):
+    """
+    Describe both audio endpoints: selectable STT models, TTS voices, language
+    codes, and the accepted speed range.
+
+    A local extension, not part of the OpenAI API. Purely filesystem work — it
+    loads no models, so it's safe to call on page load.
+    """
+    from app.main import audio_service  # local import to avoid circular import
+
+    return send_response(
+        request,
+        AudioCapabilitiesResponse(
+            stt=audio_service.describe_stt(),
+            tts=audio_service.describe_tts(),
+        ),
+    )
 
 
 @router.post(
@@ -37,11 +68,11 @@ router = APIRouter(prefix="/v1/audio", tags=["audio"])
 async def transcribe_audio(
     request: Request,
     file: UploadFile = File(..., description="Audio file to transcribe (wav, mp3, webm, …)."),
-    model: Optional[str] = Form(None, description="Accepted for OpenAI compatibility; ignored."),
-    language: Optional[str] = Form(None, description="Optional ISO-639-1 language hint; auto-detected when omitted."),
+    model: Optional[str] = Form(None, description="HuggingFace repo id from GET /v1/audio/models; the server default when omitted."),
+    language: Optional[str] = Form(None, description="Optional ISO-639-1 language hint; auto-detected when omitted. Ignored by models with `accepts_language_hint: false`."),
     response_format: Optional[str] = Form(None, description="Accepted for OpenAI compatibility; always returns JSON."),
 ):
-    """Transcribe an uploaded audio clip with Whisper on MLX."""
+    """Transcribe an uploaded audio clip with Whisper or Parakeet on MLX."""
     from app.main import audio_service  # local import to avoid circular import
 
     suffix = os.path.splitext(file.filename or "")[1] or ".webm"
@@ -50,7 +81,9 @@ async def transcribe_audio(
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
-        text = audio_service.transcribe(tmp_path, language=language)
+        text = audio_service.transcribe(tmp_path, language=language, model=model)
+    except InvalidSTTModelError as exc:  # a bad name, not a missing download
+        raise HTTPException(status_code=400, detail=str(exc))
     except SpeechModelNotPreparedError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except InferenceError as exc:
@@ -78,12 +111,14 @@ async def create_speech(request: Request, body: SpeechRequest) -> Response:
         )
 
     try:
-        audio, sample_rate = audio_service.synthesize(body.input, voice=body.voice, speed=body.speed)
+        audio, sample_rate = audio_service.synthesize(
+            body.input, voice=body.voice, speed=body.speed, lang_code=body.lang_code
+        )
 
         buffer = io.BytesIO()
         sf.write(buffer, audio, sample_rate, format="WAV")
         buffer.seek(0)
-    except InvalidVoiceError as exc:  # a bad name, not a missing download
+    except (InvalidVoiceError, InvalidLangCodeError) as exc:  # a bad name, not a missing download
         raise HTTPException(status_code=400, detail=str(exc))
     except SpeechModelNotPreparedError as exc:  # before the catch-all below
         raise HTTPException(status_code=503, detail=str(exc))

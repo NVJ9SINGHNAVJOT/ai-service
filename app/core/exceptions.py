@@ -74,6 +74,28 @@ class InvalidVoiceError(MLXManagerError):
         self.available = available
 
 
+class InvalidSTTModelError(MLXManagerError):
+    """Raised when a transcription request names an STT model that isn't configured."""
+
+    def __init__(self, model: str, available: list[str]) -> None:
+        super().__init__(
+            f"Unknown STT model '{model}'. Available models: {', '.join(available)}."
+        )
+        self.model = model
+        self.available = available
+
+
+class InvalidLangCodeError(MLXManagerError):
+    """Raised when a TTS request names a language code the model doesn't support."""
+
+    def __init__(self, lang_code: str, available: list[str]) -> None:
+        super().__init__(
+            f"Unknown language code '{lang_code}'. Available codes: {', '.join(available)}."
+        )
+        self.lang_code = lang_code
+        self.available = available
+
+
 class DownloadError(MLXManagerError):
     """Raised when a model download fails."""
 

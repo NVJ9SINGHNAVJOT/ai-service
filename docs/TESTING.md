@@ -58,6 +58,44 @@ Verify:
 - the assistant answers about the image
 - the session remains interactive after the first answer
 
+### 4. Verify the audio endpoints
+
+Needs the speech weights on disk (`task audio:setup`) and the server running
+(`task run:api`). Use any short clip at `./tmp/clip.wav`.
+
+```bash
+# What the frontend gets: models, voices, language codes
+curl -s http://127.0.0.1:8000/v1/audio/models | jq '.stt.models, .tts.voices[:3]'
+
+# Each configured STT model, one at a time
+for m in $(curl -s http://127.0.0.1:8000/v1/audio/models | jq -r '.stt.models[].id'); do
+  echo "── $m"
+  curl -s -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+    -F "file=@./tmp/clip.wav;type=audio/wav" -F "model=$m"
+  echo
+done
+
+# Bad names are 400s, not 503s
+curl -s -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+  -F "file=@./tmp/clip.wav;type=audio/wav" -F "model=not-a-model"
+
+# TTS with a non-default voice + language code
+curl -s -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"input":"Testing one two three.","voice":"bf_emma","lang_code":"b"}' \
+  --output ./tmp/reply.wav && afplay ./tmp/reply.wav
+```
+
+Verify:
+- every model in `stt.models` reports `ready: true` after `task audio:setup`
+- each transcription returns plausible text, and the server logs one
+  `Loading STT model …` line per model switch
+- `loaded: true` in `GET /v1/audio/models` tracks the model just used
+- after `STT_IDLE_TIMEOUT_SECONDS`, the log shows `Unloading idle STT model …`
+  and the next request reloads
+- the unknown model returns `400` listing the configured repos, with no mention
+  of `audio:setup`
+
 ## Notes
 
 - Manual verification is intentionally separate from `task test`.

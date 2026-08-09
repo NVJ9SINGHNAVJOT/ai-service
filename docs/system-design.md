@@ -76,8 +76,8 @@ flowchart TD
         direction LR
         mlxlm["mlx-lm<br/>text"]
         mlxvlm["mlx-vlm<br/>multimodal"]
-        whisper["mlx-whisper<br/>STT"]
-        audio["mlx-audio<br/>TTS"]
+        whisper["mlx-whisper<br/>STT · Whisper"]
+        audio["mlx-audio<br/>STT · Parakeet<br/>TTS · Kokoro"]
     end
 
     disk[("models/<br/>weights · registry.json · runtime markers")]
@@ -285,6 +285,8 @@ stateDiagram-v2
     note right of none
         AudioService (STT/TTS) is independent:
         it loads alongside whichever chat
-        backend is resident.
+        backend is resident, in its own two
+        slots (one STT, one TTS), each with
+        its own idle-unload timer.
     end note
 ```

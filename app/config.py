@@ -67,17 +67,44 @@ class Settings(BaseSettings):
     hf_cache_dir: str = "models/hf-cache"
 
     # ── Audio (STT / TTS) ───────────────────────────────────────────────────
-    # Downloaded to the HuggingFace cache on first use. Whisper turbo gives the
-    # best accuracy/speed for feeding an LLM; swap to a lighter repo (e.g.
-    # "mlx-community/whisper-base-mlx") to cut the download and memory footprint.
+    # Fetched into the HuggingFace cache by `audio prepare`; requests never
+    # download. `stt_models` is the allowlist a transcription request may pick
+    # from (comma-separated HF repo ids — a bare list[str] field would have to be
+    # written as JSON in .env, which is hostile); `stt_model` is the default when
+    # the request omits one. Whisper is multilingual and accepts a language hint;
+    # Parakeet TDT is faster and more accurate on English and doesn't hallucinate
+    # during silence, but takes no language hint (v2 is English-only, v3 covers
+    # 25 languages).
     stt_model: str = "mlx-community/whisper-large-v3-turbo"
+    stt_models: str = (
+        "mlx-community/whisper-large-v3-turbo,"
+        "mlx-community/parakeet-tdt-0.6b-v2,"
+        "mlx-community/parakeet-tdt-0.6b-v3"
+    )
     tts_model: str = "prince-canuma/Kokoro-82M"
     tts_voice: str = "af_heart"
     tts_lang_code: str = "a"  # Kokoro: 'a' = American English, 'b' = British
-    # Unload the resident TTS model after this many idle seconds to reclaim
+    # Unload the resident STT/TTS model after this many idle seconds to reclaim
     # memory; it reloads lazily on the next request. 0 keeps it resident for the
     # process lifetime.
+    stt_idle_timeout_seconds: float = 60.0
     tts_idle_timeout_seconds: float = 60.0
+
+    @property
+    def available_stt_models(self) -> list[str]:
+        """
+        The STT repo ids a transcription request may select, `stt_model` first.
+
+        Deduplicated, order-preserving. `stt_model` is always included so that
+        overriding only STT_MODEL still yields a working default.
+        """
+        ordered = [self.stt_model, *self.stt_models.split(",")]
+        seen: set[str] = set()
+        return [
+            repo
+            for repo in (raw.strip() for raw in ordered)
+            if repo and not (repo in seen or seen.add(repo))
+        ]
 
     # ── Resolved paths (computed properties) ───────────────────────────────
 
