@@ -30,8 +30,8 @@ logger = get_logger(__name__)
 # ── Typer app tree ───────────────────────────────────────────────────────────
 
 cli = typer.Typer(
-    name="ai-service",
-    help="AI Service local model manager and inference server.",
+    name="ai-core",
+    help="AI Core local model manager and inference server.",
     no_args_is_help=True,
 )
 
@@ -676,7 +676,7 @@ def serve(
     except ImportError:
         _abort("uvicorn is not installed. Run: pip install uvicorn[standard]")
 
-    console.print(f"[bold green]Starting AI Service API[/bold green] on [cyan]http://{host}:{port}[/cyan]")
+    console.print(f"[bold green]Starting AI Core API[/bold green] on [cyan]http://{host}:{port}[/cyan]")
     console.print(f"  Docs: [link]http://{host}:{port}/docs[/link]")
     uvicorn.run(
         "app.main:app",

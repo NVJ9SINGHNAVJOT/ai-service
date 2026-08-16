@@ -1,6 +1,6 @@
 # Structure & Nomenclature
 
-Where everything lives in the AI Service, what each piece is responsible for, and
+Where everything lives in AI Core, what each piece is responsible for, and
 the naming conventions the codebase follows. For the same picture as diagrams,
 see [system-design.md](system-design.md).
 

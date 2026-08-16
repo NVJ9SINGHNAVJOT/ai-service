@@ -1,4 +1,4 @@
-# AI Service
+# AI Core
 
 A local AI service for Apple Silicon Macs, built on top of MLX-LM.
 

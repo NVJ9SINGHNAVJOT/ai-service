@@ -1,1 +1,1 @@
-"""AI Service application package."""
+"""AI Core application package."""

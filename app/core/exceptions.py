@@ -1,5 +1,5 @@
 """
-Domain exceptions for the AI Service.
+Domain exceptions for AI Core.
 
 All custom exceptions inherit from `MLXManagerError` so callers can catch
 the entire domain with a single except clause if desired.
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 class MLXManagerError(Exception):
-    """Base exception for all AI Service domain errors."""
+    """Base exception for all AI Core domain errors."""
 
 
 class ModelNotFoundError(MLXManagerError):

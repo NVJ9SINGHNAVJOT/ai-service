@@ -62,7 +62,7 @@ class ChatSession:
         """Start the interactive chat loop. Exits on 'exit', 'quit', or Ctrl+C."""
         console.print(
             Panel(
-                f"[bold green]AI Service Chat[/bold green]\n"
+                f"[bold green]AI Core Chat[/bold green]\n"
                 f"Model: [cyan]{self.model_name}[/cyan]\n"
                 f"Type [bold]exit[/bold] or [bold]quit[/bold] to end the session.",
                 expand=False,

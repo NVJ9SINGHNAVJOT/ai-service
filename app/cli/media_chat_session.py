@@ -141,7 +141,7 @@ class MediaChatSession:
         audio_label = str(self.audio_path) if self.audio_path else "not loaded yet"
         console.print(
             Panel(
-                f"[bold green]AI Service Media Chat[/bold green]\n"
+                f"[bold green]AI Core Media Chat[/bold green]\n"
                 f"Model: [cyan]{self.model_name}[/cyan]\n"
                 f"Image: [cyan]{image_label}[/cyan]\n"
                 f"Audio: [cyan]{audio_label}[/cyan]\n"

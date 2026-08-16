@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     On shutdown: unload any loaded model.
     """
     settings.ensure_directories()
-    logger.info("AI Service starting up.")
+    logger.info("AI Core starting up.")
 
     yield  # application runs here
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     media_name = media_inference_service.unload()
     if media_name:
         logger.info("Media model '%s' unloaded on shutdown.", media_name)
-    logger.info("AI Service shut down.")
+    logger.info("AI Core shut down.")
 
 
 _API_DESCRIPTION = """
@@ -95,7 +95,7 @@ _OPENAPI_TAGS = [
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     app = FastAPI(
-        title="AI Service",
+        title="AI Core",
         description=_API_DESCRIPTION,
         version="1.0.0",
         lifespan=lifespan,
