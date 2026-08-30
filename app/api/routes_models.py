@@ -14,6 +14,7 @@ from typing import List
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.api.concurrency import acquire_chat_gate, chat_lock, run_chat
 from app.api.response import send_response
 
 from app.config import settings
@@ -133,6 +134,10 @@ async def list_models(request: Request) -> JSONResponse:
             "description": "No local model with that name was found.",
             "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
         },
+        409: {
+            "description": "A chat generation is in flight; the loaded model cannot be swapped right now.",
+            "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
+        },
         500: {
             "description": "The model failed to load into memory.",
             "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
@@ -148,8 +153,18 @@ async def load_model(
 
     If a different model is already loaded it will be swapped out automatically.
     """
+    # Never queue: a control endpoint should report that the server is busy
+    # rather than stalling behind a long generation.
     try:
-        _load_model_into_memory(body.name)
+        await acquire_chat_gate(0)
+    except TimeoutError:
+        raise HTTPException(
+            status_code=409,
+            detail="A chat generation is in progress; the loaded model cannot be swapped until it finishes.",
+        )
+
+    try:
+        await run_chat(_load_model_into_memory, body.name)
         return send_response(request, APIResponse(
             success=True,
             message=f"Model '{body.name}' is now loaded.",
@@ -163,6 +178,8 @@ async def load_model(
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        chat_lock().release()
 
 
 # ── Unload ───────────────────────────────────────────────────────────────────
@@ -180,6 +197,10 @@ async def load_model(
                     "example": {"detail": f"Model 'some-other-model' is not currently loaded ('{settings.example_text_model}' is)."},
                 }
             },
+        },
+        409: {
+            "description": "A chat generation is in flight; the model cannot be unloaded right now.",
+            "content": {"application/json": {"schema": _ERROR_RESPONSE_SCHEMA}},
         },
     },
 )
@@ -203,7 +224,22 @@ async def unload_model(
             detail=f"Model '{body.name}' is not currently loaded ('{current}' is).",
         )
 
-    unloaded = inference_service.unload() or media_inference_service.unload()
+    # Same rule as load: don't pull a model out from under a running generation.
+    try:
+        await acquire_chat_gate(0)
+    except TimeoutError:
+        raise HTTPException(
+            status_code=409,
+            detail="A chat generation is in progress; the model cannot be unloaded until it finishes.",
+        )
+
+    try:
+        unloaded = await run_chat(
+            lambda: inference_service.unload() or media_inference_service.unload()
+        )
+    finally:
+        chat_lock().release()
+
     if unloaded:
         return send_response(request, APIResponse(
             success=True,

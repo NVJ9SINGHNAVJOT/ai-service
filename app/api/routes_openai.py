@@ -18,6 +18,7 @@ from typing import Any, Generator
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app.api.concurrency import acquire_chat_gate, aiter_chat, chat_lock, run_chat
 from app.api.response import log_response, send_response
 
 from app.config import settings
@@ -303,6 +304,18 @@ _CHAT_COMPLETION_RESPONSES = {
             "application/json": {
                 "schema": _ERROR_RESPONSE_SCHEMA,
                 "example": {"detail": "Inference error: <backend message>"},
+            }
+        },
+    },
+    503: {
+        "description": (
+            "Another chat generation is still running. Chat is handled one request "
+            "at a time; this one waited `CHAT_QUEUE_TIMEOUT_SECONDS` for its turn."
+        ),
+        "content": {
+            "application/json": {
+                "schema": _ERROR_RESPONSE_SCHEMA,
+                "example": {"detail": "server busy: another generation is in progress. Retry shortly."},
             }
         },
     },
@@ -684,20 +697,54 @@ async def create_chat_completion(
 
     Notes:
     - Usage fields are estimated until tokenizer-based accounting is added.
+    - Chat is strictly one request at a time. A request arriving mid-generation
+      waits up to `chat_queue_timeout_seconds` for the gate, then gets a 503.
     """
+    # Validation runs before the gate — a malformed request shouldn't queue.
     _reject_unsupported_chat_features(body)
     _reject_unsupported_media_inputs(body)
     stop_sequences = _normalize_stop_sequences(body.stop)
 
+    # Held across load *and* generation: an SSE stream yields between tokens, so
+    # without this a second request could unload the model mid-stream.
+    try:
+        await acquire_chat_gate(settings.chat_queue_timeout_seconds)
+    except TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="server busy: another generation is in progress. Retry shortly.",
+        )
+
+    # Ownership of the release: normally this function's `finally`, but a
+    # streaming response hands it to the generator, which outlives us. On any
+    # exception the unpack never happens, so the flag stays False and we release.
+    gate_transferred = False
+    try:
+        response, gate_transferred = await _run_chat_completion(request, body, stop_sequences)
+        return response
+    finally:
+        if not gate_transferred:
+            chat_lock().release()
+
+
+async def _run_chat_completion(
+    request: Request, body: OpenAIChatCompletionRequest, stop_sequences: list[str]
+) -> tuple[Any, bool]:
+    """
+    Load the backend and generate, with the chat gate already held.
+
+    Returns ``(response, gate_transferred)``. `gate_transferred` is True for a
+    streaming response, whose generator releases the gate in its own `finally`.
+    """
     uses_vlm = _request_uses_vlm(body.messages) or _model_is_vlm(body.model)
     if uses_vlm:
         from app.main import media_inference_service as active_service
         already_loaded = active_service.loaded_model_name == body.model
-        _ensure_media_model_loaded(body.model)
+        await run_chat(_ensure_media_model_loaded, body.model)
     else:
         from app.main import inference_service as active_service
         already_loaded = active_service.loaded_model_name == body.model
-        _ensure_model_loaded(body.model)
+        await run_chat(_ensure_model_loaded, body.model)
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -750,7 +797,9 @@ async def create_chat_completion(
                     repetition_penalty=body.repetition_penalty,
                 )
                 final_usage: dict | None = None
-                for chunk, usage in _stream_with_stop_sequences(stream_iter, stop_sequences):
+                async for chunk, usage in aiter_chat(
+                    _stream_with_stop_sequences(stream_iter, stop_sequences)
+                ):
                     if await request.is_disconnected():
                         return
                     if usage is not None:
@@ -809,16 +858,26 @@ async def create_chat_completion(
                 yield emit_done()
             finally:
                 log_response(request, frames)
+                # This generator owns the chat gate (the route returned
+                # gate_transferred=True); this `finally` fires on completion,
+                # early return and client disconnect alike.
+                chat_lock().release()
 
-        return StreamingResponse(sse_stream(), media_type="text/event-stream")
+        return (
+            StreamingResponse(sse_stream(), media_type="text/event-stream"),
+            True,  # the generator now owns the gate
+        )
 
     try:
         # `verbose` and `stop` both need per-token handling, so we drain the
         # streaming path; otherwise the buffered chat() call is the fast path.
         if body.verbose or stop_sequences:
-            text, usage = _collect_chat_completion(active_service, body, stop_sequences)
+            text, usage = await run_chat(
+                _collect_chat_completion, active_service, body, stop_sequences
+            )
         else:
-            text, usage = active_service.chat(
+            text, usage = await run_chat(
+                active_service.chat,
                 messages=body.messages,
                 max_tokens=body.max_tokens,
                 temperature=body.temperature,
@@ -852,4 +911,4 @@ async def create_chat_completion(
         ],
         usage=response_usage,
         x_metrics=_build_verbose_metrics(usage, load_duration_s) if body.verbose else None,
-    ))
+    )), False

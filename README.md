@@ -279,6 +279,9 @@ TTS_LANG_CODE=a               # default language code; overridable per request
 STT_IDLE_TIMEOUT_SECONDS=60   # unload the STT model after N idle seconds (0 = keep resident)
 TTS_IDLE_TIMEOUT_SECONDS=60   # unload the TTS model after N idle seconds (0 = keep resident)
 
+# ── Request concurrency ─────────────────────────────────────────
+CHAT_QUEUE_TIMEOUT_SECONDS=300  # how long a chat waits for the in-flight one before 503
+
 # ── Model cache (where HF weights download; default: project-local) ──
 HF_CACHE_DIR=models/hf-cache
 ```
@@ -615,6 +618,19 @@ honored, which are accepted but ignored, which return `400`, and what image/audi
 input forms are allowed — see
 [docs/openai-compatibility.md](docs/openai-compatibility.md).
 
+### Concurrent requests
+
+The server holds one chat model in memory, so **chat requests are handled one at
+a time**. A request that arrives while another is generating waits for its turn
+and gets a `503` if the wait exceeds `CHAT_QUEUE_TIMEOUT_SECONDS` (default 300).
+While a generation is in flight, `/api/v1/models/load` and `/unload` return `409`
+rather than pulling the model out from under it.
+
+Audio is different: transcription and synthesis requests **do** run in parallel,
+with each other and with chat (they use separate memory slots). The one limit is
+per slot — if a transcription asks for a different STT model than the one loaded,
+it waits for the in-flight transcriptions to finish before the swap.
+
 ## API Endpoints
 
 | Method | Path | Description |
@@ -673,6 +689,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/models/unload \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
+
+Both return `409` while a chat generation is in flight — finish or cancel it
+first, then retry.
 
 ## Voice: Speech-to-Text & Text-to-Speech
 

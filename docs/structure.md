@@ -27,6 +27,7 @@ Everything that is version-controlled:
 │   ├── test_audio_service.py
 │   ├── test_cli_chat.py
 │   ├── test_cli_select.py
+│   ├── test_concurrency.py
 │   ├── test_logging.py
 │   ├── test_media_chat.py
 │   ├── test_models.py
@@ -88,6 +89,7 @@ app/
 │   ├── routes_models.py     #   /api/v1/models[...]
 │   ├── routes_openai.py     #   POST /v1/chat/completions (backend selection lives here)
 │   ├── routes_audio.py      #   POST /v1/audio/transcriptions, /v1/audio/speech
+│   ├── concurrency.py       #   chat gate (asyncio.Lock) + the single chat worker thread
 │   ├── middleware.py        #   LoggingMiddleware (request-id, correlation-id, body sanitizing)
 │   └── response.py          #   send_response / log_response / get_request_id helpers
 │
@@ -120,12 +122,14 @@ Every package also has an `__init__.py`. All of them are docstring-only except
 | Tests | `tests/test_<area>.py` — named for the area under test, not one file per module. | `test_openai_api.py`, `test_cli_chat.py`, `test_audio_service.py` |
 | Model names on disk | HF repo ids are sanitized: `/` becomes `__`. The registry maps back to the repo id. | `mlx-community/Llama-3.2-3B` → `mlx-community__Llama-3.2-3B` |
 
-### Why `middleware.py` and `response.py` live under `api/`
+### Why `middleware.py`, `response.py` and `concurrency.py` live under `api/`
 
 They are HTTP-only. `LoggingMiddleware` is a Starlette `BaseHTTPMiddleware` and
 runs only inside FastAPI; `response.py` builds HTTP response envelopes and reads
-request state. Neither has any meaning for the CLI, so they belong to the API
-delivery layer — not a top-level `middleware/` or `utils/` package.
+request state; `concurrency.py` orders *concurrent HTTP requests*, which the CLI
+never has — it runs one chat loop per process. None has meaning for the CLI, so
+they belong to the API delivery layer — not a top-level `middleware/` or
+`utils/` package.
 
 ## Key components
 
@@ -153,9 +157,12 @@ Subclasses implement the abstract hooks `load`, `chat`, `chat_stream`, and
 interface, `routes_openai.py` can treat either backend through one substitutable
 handle (Liskov) — it just picks the right service and calls the same methods.
 
-**Concurrency invariant:** the lock protects load/unload only. Concurrent
-`generate` calls on one loaded model are *not* safe (MLX isn't thread-safe at the
-C level). A multi-user server would need a request queue — see Extension points.
+**Concurrency invariant:** the lock protects load/unload only, and it does *not*
+order requests — it is reentrant, so two callers on the same thread both pass.
+Concurrent `generate` calls on one loaded model are not safe (MLX isn't
+thread-safe at the C level). Serialization is enforced one layer up, by the chat
+gate in [`api/concurrency.py`](../app/api/concurrency.py); the CLI needs none of
+it, running a single chat loop per process.
 
 ### `services/inference.py` — `InferenceService`
 Text backend (`mlx-lm`). Loads a model, formats messages via the tokenizer chat
@@ -181,10 +188,14 @@ the only download path.
 Two `_ResidentModel` slots — one STT, one TTS — each hold **one** model behind a
 re-arming idle timer that unloads it after `stt_idle_timeout_seconds` /
 `tts_idle_timeout_seconds` (0 = keep resident); an in-flight counter keeps the
-timer from dropping a model mid-request. A transcription request picks its model
-from `settings.available_stt_models` (HF repo ids — *not* the `org__name` form
-used for `models/downloaded`), and asking for a different one unloads the current
-one first. `mlx_whisper` caches its handle on its own module rather than handing
+timer from dropping a model mid-request. Audio requests run concurrently (the
+routes use the shared threadpool), so the same counter also gates swaps: callers
+wanting the resident model pass straight through, while one wanting a different
+model waits on a `Condition` until the in-flight requests drain. A transcription
+request picks its model from `settings.available_stt_models` (HF repo ids — *not*
+the `org__name` form used for `models/downloaded`), and asking for a different
+one unloads the current one once it is safe to. `mlx_whisper` caches its handle
+on its own module rather than handing
 us one, so the slot primes and clears `mlx_whisper.transcribe.ModelHolder`.
 `describe_stt()` / `describe_tts()` back `GET /v1/audio/models` and load nothing.
 Independent of the chat backends.
@@ -212,8 +223,9 @@ chat-completion 200 examples that FastAPI's `exclude_none` would otherwise strip
 ## Extension points
 
 - API-key auth → add as FastAPI dependency/middleware in `api/`.
-- Request queue for safe concurrent inference → wrap `LoadedModelService` in
-  `services/`.
+- Multi-request inference (batching, or more than one resident chat model) →
+  replace the single gate + single worker thread in `api/concurrency.py`; the
+  serialization is deliberate today, not incidental.
 - OpenAI `/v1/models`, embeddings → new `routes_*.py` + service method.
 - Persistent conversation storage → new service + schema.
 

@@ -35,9 +35,12 @@ class LoadedModelService(ABC):
     Subclasses own the backend specifics (which library loads the model and how
     inference runs); this base owns the shared, backend-agnostic bookkeeping.
 
-    Thread-safety: a reentrant lock protects load/unload. Concurrent generate
-    calls on the same loaded model are NOT safe (MLX is not thread-safe at the
-    C level); for a multi-user server you would add a request queue.
+    Thread-safety: a reentrant lock protects load/unload. It does NOT order
+    requests — being reentrant, two callers on one thread both pass straight
+    through — and concurrent generate calls on the same loaded model are not safe
+    (MLX is not thread-safe at the C level). The API serializes chat requests one
+    layer up, in ``app/api/concurrency.py``; the CLI runs one chat loop per
+    process and needs nothing.
     """
 
     #: Error surfaced when inference is requested before a model is loaded.

@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # process lifetime.
     stt_idle_timeout_seconds: float = 60.0
     tts_idle_timeout_seconds: float = 60.0
+    # How long a chat request waits for the in-flight one to finish before giving
+    # up with 503. Chat is strictly one-at-a-time; this bounds the queue so a
+    # stuck generation can't hang every client behind it.
+    chat_queue_timeout_seconds: float = 300.0
 
     @property
     def available_stt_models(self) -> list[str]:

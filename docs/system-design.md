@@ -113,6 +113,7 @@ flowchart TB
         rh["routes_health.py"]
         mw["middleware.py"]
         resp["response.py"]
+        conc["concurrency.py<br/>chat gate + chat thread"]
     end
 
     subgraph cli["app/cli/ — terminal delivery"]
@@ -149,9 +150,12 @@ flowchart TB
 
     appmain --> ro & rm & ra & rh
     appmain --> mw
+    appmain --> conc
     appmain --> inf & minf & aud
 
     ro --> resp
+    ro --> conc
+    rm --> conc
     rm --> resp
     ra --> resp
     rh --> resp
@@ -195,6 +199,7 @@ sequenceDiagram
     participant C as Client
     participant M as LoggingMiddleware
     participant R as routes_openai.py
+    participant G as chat gate<br/>(api/concurrency.py)
     participant T as InferenceService<br/>(mlx-lm)
     participant V as MediaInferenceService<br/>(mlx-vlm)
     participant H as Exception handlers<br/>(app/main.py)
@@ -206,6 +211,14 @@ sequenceDiagram
     R->>R: parse OpenAIChatCompletionRequest
     R->>R: _reject_unsupported_chat_features() → 400
     R->>R: _reject_unsupported_media_inputs() → 400
+
+    R->>G: acquire_chat_gate(chat_queue_timeout_seconds)
+    alt another chat still generating
+        G--)R: TimeoutError
+        R-->>C: 503 server busy
+    else gate acquired
+        G-->>R: held through load + generation
+    end
 
     alt _request_uses_vlm(messages) or _model_is_vlm(model)
         R->>T: unload (one model at a time)
@@ -225,13 +238,15 @@ sequenceDiagram
         R->>R: _split_at_stop_sequence()
         R-->>C: OpenAIChatCompletionResponse<br/>(+ x_metrics if verbose)
     else stream = true
-        R->>T: chat_stream()
+        R->>T: chat_stream() — pumped via aiter_chat()
         loop per token
             T-->>R: delta
             R-->>C: data: {chunk}
         end
         R-->>C: data: [DONE]<br/>(x_metrics on final chunk if verbose)
     end
+
+    R->>G: release (the SSE generator's finally when streaming)
 
     Note over R,H: Failure BEFORE the response starts →<br/>handlers in app/main.py log once + map to HTTP
     Note over R: Failure MID-SSE → the stream generator is the<br/>boundary: logs with exc_info, emits error frame + [DONE]

@@ -26,6 +26,7 @@ from app.core.logging import correlation_id_var, get_logger, request_id_var, set
 from app.services.audio import AudioService
 from app.services.inference import InferenceService
 from app.services.media_inference import MediaInferenceService
+from app.api.concurrency import shutdown_chat_executor
 from app.api.response import get_correlation_id, get_request_id, log_response, send_response
 
 setup_logging()
@@ -50,7 +51,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield  # application runs here
 
-    # Shutdown
+    # Shutdown — drain the chat worker first so nothing is mid-generation while
+    # we unload underneath it.
+    shutdown_chat_executor()
     name = inference_service.unload()
     if name:
         logger.info("Model '%s' unloaded on shutdown.", name)

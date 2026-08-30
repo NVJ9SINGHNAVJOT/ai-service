@@ -19,6 +19,7 @@ from typing import Optional
 import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from app.core.exceptions import (
     InferenceError,
@@ -81,7 +82,11 @@ async def transcribe_audio(
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
-        text = audio_service.transcribe(tmp_path, language=language, model=model)
+        # Off the event loop: audio requests run concurrently with each other and
+        # with chat. AudioService's resident slots handle the model swapping.
+        text = await run_in_threadpool(
+            audio_service.transcribe, tmp_path, language=language, model=model
+        )
     except InvalidSTTModelError as exc:  # a bad name, not a missing download
         raise HTTPException(status_code=400, detail=str(exc))
     except SpeechModelNotPreparedError as exc:
@@ -111,8 +116,12 @@ async def create_speech(request: Request, body: SpeechRequest) -> Response:
         )
 
     try:
-        audio, sample_rate = audio_service.synthesize(
-            body.input, voice=body.voice, speed=body.speed, lang_code=body.lang_code
+        audio, sample_rate = await run_in_threadpool(
+            audio_service.synthesize,
+            body.input,
+            voice=body.voice,
+            speed=body.speed,
+            lang_code=body.lang_code,
         )
 
         buffer = io.BytesIO()

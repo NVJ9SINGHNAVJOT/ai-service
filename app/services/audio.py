@@ -101,13 +101,15 @@ class _ResidentModel:
     """
     One in-memory model slot with a re-arming idle-unload timer.
 
-    Holds at most one model: acquiring a different name unloads the current one
-    first. The lock guards load/unload only — generation runs outside it, so
-    concurrent generate calls on one loaded model are as (un)safe as MLX itself
-    (see the concurrency invariant on `LoadedModelService`). The in-flight
-    counter is what keeps the timer from dropping a model mid-request:
-    ``Timer.cancel()`` alone can't, since it's a no-op once the callback has
-    already started running.
+    Holds at most one model, and requests for **that** model run concurrently:
+    the lock guards load/unload only, so generation happens outside it.
+    Requesting a *different* model waits for the in-flight ones to drain before
+    swapping — evicting underneath them would pull the handle out from under a
+    running generate (for Whisper, the shared `ModelHolder` it is about to read).
+
+    The in-flight counter serves both that wait and the idle timer, which must
+    not drop a model mid-request; ``Timer.cancel()`` alone can't guarantee that,
+    since it's a no-op once the callback has already started running.
     """
 
     def __init__(
@@ -119,7 +121,7 @@ class _ResidentModel:
         self._label = label
         self._idle_timeout = idle_timeout
         self._unload_hook = unload_hook
-        self._lock = threading.RLock()
+        self._cond = threading.Condition(threading.RLock())
         self._model = None
         self._name: Optional[str] = None
         self._snapshot: Optional[Path] = None
@@ -139,10 +141,16 @@ class _ResidentModel:
         Yield ``(handle, snapshot_path)`` for `name`, loading it if needed.
 
         `loader` returns the pair to cache; it runs under the lock and only when
-        the slot doesn't already hold `name`.
+        the slot doesn't already hold `name`. Concurrent callers asking for the
+        model already resident proceed straight through; one asking for a
+        different model blocks until the others have finished.
         """
-        with self._lock:
-            self._cancel_timer()
+        with self._cond:
+            # A different model is wanted but this one is still generating —
+            # wait it out rather than yanking the handle away mid-request.
+            while self._name is not None and self._name != name and self._in_flight:
+                self._cond.wait()
+            self._cancel_timer()  # after the wait: the drain re-armed it
             if self._name != name:
                 self._release()
             if self._model is None:
@@ -161,9 +169,10 @@ class _ResidentModel:
         try:
             yield model, snapshot  # generation runs outside the lock
         finally:
-            with self._lock:
+            with self._cond:
                 self._in_flight -= 1
                 self._arm_timer()
+                self._cond.notify_all()  # a swap may be waiting on the drain
 
     def _release(self) -> None:
         """Drop the resident handle. Caller holds the lock."""
@@ -190,7 +199,7 @@ class _ResidentModel:
 
     def _unload_if_idle(self) -> None:
         """Drop the resident model once the idle timeout elapses."""
-        with self._lock:
+        with self._cond:
             self._timer = None
             if self._model is None or self._in_flight:
                 return
